@@ -323,35 +323,30 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> _synthesizeAndPlayChunk(int index) async {
-    if (index >= _chunks.length) return;
+    if (index >= _chunks.length) {
+      _state = TtsState.ready;
+      notifyListeners();
+      return;
+    }
 
     try {
+      _chunkIndex = index;
       _state = TtsState.loading;
       notifyListeners();
 
       final text = _chunks[index];
       final tempDir = await getTemporaryDirectory();
       
-      // Clean up previous file if any to save space
-      if (_audioPath != null) {
-        try {
-          final oldFile = File(_audioPath!);
-          if (await oldFile.exists()) {
-            await oldFile.delete();
-          }
-        } catch (_) {}
-      }
-
       final outputPath = '${tempDir.path}/piper_part_${DateTime.now().millisecondsSinceEpoch}.wav';
       
-      final audioFile = await _tts.synthesizeToFile(
+      await _tts.synthesizeToFile(
         text: text,
         outputPath: outputPath,
       );
       
-      _audioPath = audioFile.path;
-      await _player.setFilePath(audioFile.path);
-      await _player.play();
+      _audioPath = outputPath;
+      await _player.setFilePath(outputPath);
+      _player.play(); // Start playback but state is set below after UI can react
       
       _state = TtsState.playing;
       notifyListeners();
@@ -373,6 +368,9 @@ class TtsService extends ChangeNotifier {
         return;
       }
 
+      _state = TtsState.loading;
+      notifyListeners();
+
       await initialize();
 
       if (_state == TtsState.ready || _state == TtsState.error) {
@@ -381,6 +379,13 @@ class TtsService extends ChangeNotifier {
         _chunkIndex = 0;
         
         if (_chunks.isNotEmpty) {
+          // Listen for player state to trigger next chunk
+          _player.playerStateStream.listen((state) {
+            if (state.processingState == ProcessingState.completed && _state == TtsState.playing) {
+              _synthesizeAndPlayChunk(_chunkIndex + 1);
+            }
+          }, cancelOnError: false);
+
           await _synthesizeAndPlayChunk(0);
         }
       }

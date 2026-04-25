@@ -103,20 +103,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             });
           }
         });
-      } else {
-        await ttsService.downloadVoice(_selectedVoicePack, (progress) {
-          if (mounted) {
-            setState(() {
-              _downloadProgress = progress;
-              _downloadStatus = 'Downloading: ${(progress * 100).toStringAsFixed(0)}%';
-            });
-          }
-        });
       }
 
       await _checkDownloadedVoices();
       if (mounted) {
-        final name = _selectedCustomVoice?.name ?? _selectedVoicePack.name;
+        final name = _selectedCustomVoice?.name ?? 'Voice';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('$name voice downloaded successfully!')),
         );
@@ -191,9 +182,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Consumer<TtsService>(
             builder: (context, tts, _) {
               _selectedCustomVoice = tts.selectedCustomVoice;
-              final voiceName = _selectedCustomVoice?.name ?? _selectedVoicePack.name;
-              final voiceKey = _selectedCustomVoice?.key ?? _selectedVoicePack.name;
-              final isDownloaded = _downloadedVoices[voiceKey] ?? false;
+              final voiceName = _selectedCustomVoice?.name ?? 'No voice selected';
+              final voiceKey = _selectedCustomVoice?.key ?? '';
+              final isDownloaded = voiceKey.isNotEmpty && (_downloadedVoices[voiceKey] ?? false);
 
               return Column(
                 children: [
@@ -203,7 +194,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     trailing: const Icon(Icons.arrow_drop_down),
                     onTap: () => _showVoiceSelector(tts),
                   ),
-                  if (!isDownloaded)
+                  if (!isDownloaded && voiceKey.isNotEmpty)
                     ListTile(
                       title: const Text('Download Voice'),
                       subtitle: _isLoadingVoice
@@ -225,7 +216,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               label: const Text('Download'),
                             ),
                     )
-                  else
+                  else if (isDownloaded)
                     const ListTile(
                       title: Text('Voice Status'),
                       subtitle: Text('Downloaded and ready to use'),
@@ -405,9 +396,6 @@ class _VoiceSelectionModalState extends State<VoiceSelectionModal> {
 
   @override
   Widget build(BuildContext context) {
-    final filteredBuiltIn = PiperVoicePack.values.where((v) =>
-        v.name.toLowerCase().contains(_searchQuery.toLowerCase())).toList();
-
     final filteredCustom = widget.tts.availableVoices.where((v) =>
         v.key.toLowerCase().contains(_searchQuery.toLowerCase()) ||
         v.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
@@ -459,31 +447,6 @@ class _VoiceSelectionModalState extends State<VoiceSelectionModal> {
               child: ListView(
                 controller: scrollController,
                 children: [
-                  if (filteredBuiltIn.isNotEmpty) ...[
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                      child: Text('Built-in Voices', style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                    ...filteredBuiltIn.map((voice) {
-                      final isDownloaded = widget.downloadedVoices[voice.name] ?? false;
-                      final isSelected = widget.selectedCustomVoice == null && widget.selectedVoicePack == voice;
-                      return ListTile(
-                        title: Text(voice.name),
-                        subtitle: Text(isDownloaded ? 'Downloaded' : 'Available'),
-                        leading: Icon(
-                          isDownloaded ? Icons.check_circle : Icons.download_for_offline,
-                          color: isDownloaded ? Colors.green : Colors.grey,
-                        ),
-                        trailing: isSelected
-                            ? Icon(Icons.radio_button_checked, color: Theme.of(context).colorScheme.primary)
-                            : const Icon(Icons.radio_button_off),
-                        onTap: () {
-                          widget.onVoiceSelected(voice, null);
-                          Navigator.pop(context);
-                        },
-                      );
-                    }),
-                  ],
                   if (filteredCustom.isNotEmpty) ...[
                     const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -509,7 +472,7 @@ class _VoiceSelectionModalState extends State<VoiceSelectionModal> {
                       );
                     }),
                   ],
-                  if (filteredBuiltIn.isEmpty && filteredCustom.isEmpty)
+                  if (filteredCustom.isEmpty)
                     const Center(
                       child: Padding(
                         padding: EdgeInsets.all(32.0),
