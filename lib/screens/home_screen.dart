@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'reader_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -12,17 +11,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _requestPermissions();
-  }
-
-  Future<void> _requestPermissions() async {
-    await Permission.storage.request();
-    await Permission.manageExternalStorage.request();
-  }
 
   Future<void> _openFile() async {
     setState(() => _isLoading = true);
