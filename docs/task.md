@@ -14,11 +14,11 @@
 - [x] Add basic navigation between screens
 
 ## Phase 3: EPUB Reading Integration
-- [ ] Research and select EPUB parsing library
-- [ ] Implement EPUB file loading and parsing
-- [ ] Extract text content from EPUB files
-- [ ] Display EPUB content in readable format
-- [ ] Add basic text formatting (fonts, sizes, etc.)
+- [x] Research and select EPUB parsing library
+- [x] Implement EPUB file loading and parsing
+- [x] Extract text content from EPUB files
+- [x] Display EPUB content in readable format
+- [x] Add basic text formatting (fonts, sizes, etc.)
 
 ## Phase 4: TTS Integration with Piper Plugin
 - [ ] Add piper_tts_plugin dependency
