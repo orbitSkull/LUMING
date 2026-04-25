@@ -8,10 +8,10 @@
 - [x] Create basic folder structure (lib/features, lib/widgets, lib/utils, etc.)
 
 ## Phase 2: Basic UI Implementation
-- [ ] Create home screen with file picker/button
-- [ ] Design EPUB reader screen layout
-- [ ] Implement file selection functionality
-- [ ] Add basic navigation between screens
+- [x] Create home screen with file picker/button
+- [x] Design EPUB reader screen layout
+- [x] Implement file selection functionality
+- [x] Add basic navigation between screens
 
 ## Phase 3: EPUB Reading Integration
 - [ ] Research and select EPUB parsing library
