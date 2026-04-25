@@ -73,6 +73,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
     _loadBooks();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _loadBooks();
+  }
+
+  Future<void> refresh() async {
+    await _loadBooks();
+  }
+
   Future<void> _loadBooks() async {
     final prefs = await SharedPreferences.getInstance();
     final data = prefs.getString('library');

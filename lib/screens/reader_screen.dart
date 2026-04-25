@@ -52,6 +52,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
       await _addToLibrary(widget.filePath, book.title ?? 'Untitled');
 
+      if (mounted) {
+        _showBookAddedToast();
+      }
+
       setState(() {
         _book = book;
         _chapters = chapters;
@@ -136,6 +140,17 @@ class _ReaderScreenState extends State<ReaderScreen> {
         await prefs.setString('library', jsonEncode(books));
       }
     } catch (_) {}
+  }
+
+  void _showBookAddedToast() {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Added to Library'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   @override
