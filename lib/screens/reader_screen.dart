@@ -549,6 +549,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
                   onPressed: () => tts.nextParagraph(),
                   tooltip: 'Next Paragraph',
                 ),
+                GestureDetector(
+                  onLongPress: () => _showTtsQuickSettings(context, tts),
+                  child: IconButton(
+                    icon: const Icon(Icons.settings),
+                    onPressed: () => _showTtsQuickSettings(context, tts),
+                    tooltip: 'TTS Settings',
+                  ),
+                ),
                 IconButton(
                   icon: const Icon(Icons.stop_circle_outlined, color: Colors.red),
                   onPressed: () => tts.stop(),

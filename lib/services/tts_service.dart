@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import '../models/piper_voice.dart';
 
 enum TtsState { idle, loading, ready, playing, paused, error }
@@ -458,7 +459,18 @@ class TtsService extends ChangeNotifier {
       }
       
       // Load the audio file
-      await _player.setFilePath(outputPath);
+      await _player.setAudioSource(
+        AudioSource.uri(
+          Uri.file(outputPath),
+          tag: MediaItem(
+            id: 'luming_tts_chunk',
+            album: "LUMING Reader",
+            title: text,
+            artist: "LUMING TTS",
+            artUri: Uri.parse("asset:///assets/logo.png"),
+          ),
+        ),
+      );
 
       // Apply noise suppression via platform channel
       try {

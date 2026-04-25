@@ -1,13 +1,13 @@
 package com.orbitskull.luming
 
-import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.util.Log
 
-class MainActivity: FlutterActivity() {
+class MainActivity: AudioServiceActivity() {
     private val CHANNEL = "com.orbitskull.luming/audio_effects"
     private var noiseSuppressor: NoiseSuppressor? = null
 
@@ -23,7 +23,7 @@ class MainActivity: FlutterActivity() {
                     result.error("INVALID_ARGUMENT", "Session ID is null", null)
                 }
             } else if (call.method == "releaseNoiseSuppression") {
-                releaseNoiseSuppression()
+                releaseNoiseSuppressor()
                 result.success(true)
             } else {
                 result.notImplemented()
@@ -49,7 +49,7 @@ class MainActivity: FlutterActivity() {
         }
     }
 
-    private fun releaseNoiseSuppression() {
+    private fun releaseNoiseSuppressor() {
         noiseSuppressor?.release()
         noiseSuppressor = null
     }

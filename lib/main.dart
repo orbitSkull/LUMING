@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'screens/reader_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/stats_screen.dart';
@@ -65,6 +66,12 @@ class BookEntry {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  await JustAudioBackground.init(
+    androidNotificationChannelId: 'com.orbitskull.luming.channel.audio',
+    androidNotificationChannelName: 'Audio playback',
+    androidNotificationOngoing: true,
+  );
+
   final prefs = await SharedPreferences.getInstance();
   final darkMode = prefs.getBool('darkMode') ?? false;
   
