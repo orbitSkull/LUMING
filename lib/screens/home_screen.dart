@@ -26,24 +26,31 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.first;
-        String? filePath;
+        String filePath;
 
-        if (!kIsWeb && file.path != null) {
-          filePath = file.path;
-        } else if (kIsWeb && file.bytes != null) {
-          final tempDir = Directory.systemTemp;
-          final tempFile = File('${tempDir.path}/${file.name}');
-          await tempFile.writeAsBytes(file.bytes!);
-          filePath = tempFile.path;
-        } else if (file.path != null) {
-          filePath = file.path;
+        if (!kIsWeb) {
+          if (file.path != null) {
+            filePath = file.path!;
+          } else if (file.bytes != null) {
+            filePath = await _saveBytesToTemp(file.name, file.bytes!);
+          } else {
+            throw Exception('No file selected');
+          }
+        } else {
+          if (file.bytes != null) {
+            filePath = await _saveBytesToTemp(file.name, file.bytes!);
+          } else if (file.path != null) {
+            filePath = file.path!;
+          } else {
+            throw Exception('No file selected');
+          }
         }
 
-        if (filePath != null && mounted) {
+        if (mounted) {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => ReaderScreen(filePath: filePath!),
+              builder: (context) => ReaderScreen(filePath: filePath),
             ),
           );
         }
@@ -51,7 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error opening file: $e')),
+          SnackBar(content: Text('Error: $e')),
         );
       }
     } finally {
@@ -59,6 +66,13 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  Future<String> _saveBytesToTemp(String fileName, List<int> bytes) async {
+    final tempDir = Directory.systemTemp;
+    final tempFile = File('${tempDir.path}/$fileName');
+    await tempFile.writeAsBytes(bytes);
+    return tempFile.path;
   }
 
   @override
