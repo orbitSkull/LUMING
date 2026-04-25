@@ -229,17 +229,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Divider(),
           ListTile(
             title: const Text('Default Speech Rate'),
-            subtitle: Text('${_defaultSpeechRate.toStringAsFixed(1)}x'),
+            subtitle: Text('${_defaultSpeechRate.toStringAsFixed(2)}x'),
             trailing: SizedBox(
               width: 150,
               child: Slider(
                 value: _defaultSpeechRate,
-                min: 0.5,
-                max: 2.0,
-                divisions: 6,
-                label: '${_defaultSpeechRate.toStringAsFixed(1)}x',
+                min: 0.1,
+                max: 4.0,
+                divisions: 39,
+                label: '${_defaultSpeechRate.toStringAsFixed(2)}x',
                 onChanged: (value) {
                   setState(() => _defaultSpeechRate = value);
+                  Provider.of<TtsService>(context, listen: false).setSpeechRate(value);
                   _saveSettings();
                 },
               ),
@@ -247,17 +248,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           ListTile(
             title: const Text('Default Pitch'),
-            subtitle: Text(_defaultPitch.toStringAsFixed(1)),
+            subtitle: Text(_defaultPitch.toStringAsFixed(2)),
             trailing: SizedBox(
               width: 150,
               child: Slider(
                 value: _defaultPitch,
-                min: 0.5,
-                max: 2.0,
-                divisions: 6,
-                label: _defaultPitch.toStringAsFixed(1),
+                min: 0.1,
+                max: 4.0,
+                divisions: 39,
+                label: _defaultPitch.toStringAsFixed(2),
                 onChanged: (value) {
                   setState(() => _defaultPitch = value);
+                  Provider.of<TtsService>(context, listen: false).setPitch(value);
                   _saveSettings();
                 },
               ),

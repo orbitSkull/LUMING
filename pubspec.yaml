@@ -1,5 +1,5 @@
-name: da_pub_reader
-description: "A Flutter app for reading EPUB files with TTS support using Piper plugin."
+name: luming
+description: "LUMING - A Flutter app for reading EPUB files with TTS support using Piper plugin."
 publish_to: 'none'
 
 version: 1.0.0+1

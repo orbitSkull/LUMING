@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:piper_tts_plugin/piper_tts_plugin.dart';
 import 'package:piper_tts_plugin/enums/piper_voice_pack.dart';
 import 'package:just_audio/just_audio.dart';
@@ -16,12 +17,15 @@ enum TtsState { idle, loading, ready, playing, paused, error }
 class TtsService extends ChangeNotifier {
   final PiperTtsPlugin _tts = PiperTtsPlugin();
   final AudioPlayer _player = AudioPlayer();
+  static const _audioEffectChannel = MethodChannel('com.orbitskull.luming/audio_effects');
   
   TtsState _state = TtsState.idle;
+  bool _isEngineLoaded = false;
   String? _currentText;
   double _speechRate = 1.0;
   double _pitch = 1.0;
   int _sampleRate = 22050; // Default Piper sample rate
+  int _speakerId = 0; // Default speaker ID for multi-speaker models
   
   // Legacy support for PiperVoicePack
   PiperVoicePack _selectedVoicePack = PiperVoicePack.norman;
@@ -31,9 +35,12 @@ class TtsService extends ChangeNotifier {
 
   String? _errorMessage;
   String? _audioPath;
+  final List<String> _tempFiles = [];
 
   List<String> _chunks = [];
+  List<int> _paragraphStartIndices = [];
   int _chunkIndex = 0;
+  VoidCallback? onChapterFinished;
 
   TtsState get state => _state;
   double get speechRate => _speechRate;
@@ -66,13 +73,21 @@ class TtsService extends ChangeNotifier {
 
   Future<void> _onPlaybackCompleted() async {
     if (_chunkIndex < _chunks.length - 1) {
-      _chunkIndex++;
-      await _synthesizeAndPlayChunk(_chunkIndex);
+      // Reduced delay between sentences for a more natural flow
+      await Future.delayed(const Duration(milliseconds: 150));
+      if (_state == TtsState.playing || _state == TtsState.loading) { 
+        _chunkIndex++;
+        await _synthesizeAndPlayChunk(_chunkIndex);
+      }
     } else {
       _state = TtsState.ready;
       _chunks = [];
       _chunkIndex = 0;
       notifyListeners();
+      // Added callback for completion to trigger next chapter
+      if (onChapterFinished != null) {
+        onChapterFinished!();
+      }
     }
   }
 
@@ -83,8 +98,25 @@ class TtsService extends ChangeNotifier {
     
     final customVoiceKey = prefs.getString('selectedCustomVoiceKey');
     if (customVoiceKey != null) {
-      // We will need to find the voice in availableVoices once fetched
-      // For now we just keep the key to find it later
+      // Create a temporary PiperVoice placeholder so initialize() can work 
+      // immediately before fetchVoices() returns the full list from HF.
+      final modelPath = prefs.getString("piper_voice_custom_${customVoiceKey}_model");
+      final configPath = prefs.getString("piper_voice_custom_${customVoiceKey}_config");
+      
+      if (modelPath != null && configPath != null) {
+        _selectedCustomVoice = PiperVoice(
+          key: customVoiceKey,
+          name: customVoiceKey.split('-').last,
+          language: customVoiceKey.split('-').first,
+          country: "",
+          quality: "",
+          onnxPath: "", // Not needed for local loading
+          configPath: "",
+        );
+        debugPrint('TTS: Pre-loaded voice placeholder for $customVoiceKey');
+        // Initializing immediately with the stored paths
+        initialize();
+      }
     }
 
     final voiceIndex = prefs.getInt('selectedVoice') ?? PiperVoicePack.norman.index;
@@ -118,6 +150,9 @@ class TtsService extends ChangeNotifier {
             _selectedCustomVoice = _availableVoices.firstWhere(
               (v) => v.key == customVoiceKey,
             );
+            debugPrint('TTS: Restored selected voice: ${_selectedCustomVoice?.key}');
+            // Automatically initialize if we found the voice
+            initialize();
           } catch (_) {
             _selectedCustomVoice = _availableVoices.isNotEmpty ? _availableVoices.first : null;
           }
@@ -141,7 +176,7 @@ class TtsService extends ChangeNotifier {
   }
 
   void setSpeechRate(double rate) {
-    _speechRate = rate.clamp(0.5, 2.0);
+    _speechRate = rate.clamp(0.1, 4.0);
     // If we're playing, update the player speed immediately with correction
     if (_state == TtsState.playing || _state == TtsState.paused) {
       double speedCorrection = _sampleRate / 22050.0;
@@ -151,7 +186,7 @@ class TtsService extends ChangeNotifier {
   }
 
   void setPitch(double pitch) {
-    _pitch = pitch.clamp(0.5, 2.0);
+    _pitch = pitch.clamp(0.1, 4.0);
     // If we're playing, update the player pitch immediately
     if (_state == TtsState.playing || _state == TtsState.paused) {
       _player.setPitch(_pitch);
@@ -170,9 +205,15 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
-    if (_state == TtsState.loading || _state == TtsState.ready) return;
+    if (_isEngineLoaded && _state != TtsState.error) {
+      _state = TtsState.ready;
+      return;
+    }
+    
+    if (_state == TtsState.loading) return;
     
     _state = TtsState.loading;
+    _isEngineLoaded = false;
     _errorMessage = null;
     notifyListeners();
 
@@ -184,18 +225,30 @@ class TtsService extends ChangeNotifier {
         final configPath = prefs.getString(_selectedCustomVoice!.configPrefKey);
         
         if (modelPath != null && configPath != null && File(modelPath).existsSync() && File(configPath).existsSync()) {
-          // Extract sample rate from config if possible
+          // Extract sample rate and speaker info from config if possible
           try {
             final configContent = await File(configPath).readAsString();
             final configJson = json.decode(configContent);
             _sampleRate = configJson['audio']?['sample_rate'] ?? 22050;
+            
+            // Check for multi-speaker model
+            if (configJson['num_speakers'] != null && (configJson['num_speakers'] as int) > 1) {
+              // Default to first speaker if not specified, or could be expanded later
+              _speakerId = 0; 
+              debugPrint('TTS: Multi-speaker model detected. Total speakers: ${configJson['num_speakers']}. Using speaker 0.');
+            } else {
+              _speakerId = 0;
+            }
+            
             debugPrint('TTS: Detected sample rate: $_sampleRate');
           } catch (e) {
             _sampleRate = 22050;
-            debugPrint('TTS: Could not parse config for sample rate, using default 22050');
+            _speakerId = 0;
+            debugPrint('TTS: Could not parse config for details, using defaults');
           }
 
           await _tts.loadViaPath(modelPath: modelPath, configPath: configPath);
+          _isEngineLoaded = true;
           _state = TtsState.ready;
         } else {
           throw Exception('Voice model not downloaded');
@@ -203,11 +256,14 @@ class TtsService extends ChangeNotifier {
       } else {
         await _tts.loadViaVoicePack(_selectedVoicePack);
         _sampleRate = 22050; // PiperVoicePack defaults
+        _isEngineLoaded = true;
         _state = TtsState.ready;
       }
     } catch (e) {
+      debugPrint('TTS: Initialization error: $e');
       _errorMessage = 'Voice model not loaded. Go to Settings > TTS to download a voice model first.';
       _state = TtsState.error;
+      _isEngineLoaded = false;
     }
     notifyListeners();
   }
@@ -296,56 +352,37 @@ class TtsService extends ChangeNotifier {
   }
 
   List<String> _splitIntoChunks(String text) {
-    // Split by paragraphs first
+    final RegExp sentenceSplitter = RegExp(r'(?<!\b(?:Mr|Mrs|Ms|Dr|Jr|Sr|vs|Prof|St|i\.e|e\.g)\.)(?<=[.!?])\s+');
+    
     final List<String> paragraphs = text.split(RegExp(r'\n+'));
     final List<String> chunks = [];
+    _paragraphStartIndices = [];
     
     for (var paragraph in paragraphs) {
       paragraph = paragraph.trim();
       if (paragraph.isEmpty) continue;
 
-      // If paragraph is within limits, keep it as one chunk
-      if (paragraph.length <= 500) {
-        chunks.add(paragraph);
-      } else {
-        // Paragraph is too long, split into sentences
-        final RegExp sentenceSplitter = RegExp(r'(?<=[.!?])\s+');
-        final List<String> rawSentences = paragraph.split(sentenceSplitter);
-        
-        String currentChunk = "";
-        for (var sentence in rawSentences) {
-          sentence = sentence.trim();
-          if (sentence.isEmpty) continue;
+      _paragraphStartIndices.add(chunks.length);
+      final List<String> sentences = paragraph.split(sentenceSplitter);
+      
+      for (var sentence in sentences) {
+        sentence = sentence.trim();
+        if (sentence.isEmpty) continue;
 
-          // If a single sentence is already very long (> 500 chars)
-          if (sentence.length > 500) {
-            if (currentChunk.isNotEmpty) {
-              chunks.add(currentChunk.trim());
-              currentChunk = "";
+        if (sentence.length > 400) {
+          List<String> words = sentence.split(' ');
+          String temp = "";
+          for (var word in words) {
+            if (temp.length + word.length > 350) {
+              chunks.add(temp.trim());
+              temp = word;
+            } else {
+              temp = temp.isEmpty ? word : "$temp $word";
             }
-            
-            // Split long sentence into smaller pieces by words
-            List<String> words = sentence.split(' ');
-            String temp = "";
-            for (var word in words) {
-              if (temp.length + word.length > 450) {
-                chunks.add(temp.trim());
-                temp = word;
-              } else {
-                temp = temp.isEmpty ? word : "$temp $word";
-              }
-            }
-            if (temp.isNotEmpty) currentChunk = temp;
-          } else if (currentChunk.isNotEmpty && currentChunk.length + sentence.length > 500) {
-            chunks.add(currentChunk.trim());
-            currentChunk = sentence;
-          } else {
-            currentChunk = currentChunk.isEmpty ? sentence : "$currentChunk $sentence";
           }
-        }
-        
-        if (currentChunk.isNotEmpty) {
-          chunks.add(currentChunk.trim());
+          if (temp.isNotEmpty) chunks.add(temp.trim());
+        } else {
+          chunks.add(sentence);
         }
       }
     }
@@ -360,6 +397,9 @@ class TtsService extends ChangeNotifier {
       notifyListeners();
       return;
     }
+
+    // Check if we were stopped before starting synthesis
+    if (_chunks.isEmpty) return;
 
     try {
       _chunkIndex = index;
@@ -378,6 +418,16 @@ class TtsService extends ChangeNotifier {
         text: text,
         outputPath: outputPath,
       );
+
+      // Check again if we were stopped or if a new 'speak' call happened during synthesis
+      if (_chunks.isEmpty || _chunkIndex != index) {
+        debugPrint('TTS: Synthesis finished but chunk was cancelled or changed. Cleaning up.');
+        try {
+          final file = File(outputPath);
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+        return;
+      }
       
       final file = File(outputPath);
       if (await file.exists()) {
@@ -387,24 +437,48 @@ class TtsService extends ChangeNotifier {
            throw Exception('Synthesized file is empty');
         }
       } else {
-        // Fallback: check if the plugin returned the file elsewhere or if it's a path issue
-        debugPrint('TTS: File NOT found at $outputPath, checking if synthesis failed silently');
         throw Exception('Synthesized file does not exist at $outputPath');
       }
 
       _audioPath = outputPath;
+      _tempFiles.add(outputPath);
+      
+      // Keep only the last 3 temp files to save space
+      if (_tempFiles.length > 3) {
+        final oldFile = _tempFiles.removeAt(0);
+        try {
+          final fileToDelete = File(oldFile);
+          if (await fileToDelete.exists()) {
+            await fileToDelete.delete();
+            debugPrint('TTS: Deleted old temp file: $oldFile');
+          }
+        } catch (e) {
+          debugPrint('TTS: Error deleting temp file: $e');
+        }
+      }
       
       // Load the audio file
       await _player.setFilePath(outputPath);
+
+      // Apply noise suppression via platform channel
+      try {
+        final sessionId = _player.androidAudioSessionId;
+        if (sessionId != null) {
+          await _audioEffectChannel.invokeMethod('applyNoiseSuppression', {'sessionId': sessionId});
+        }
+      } catch (e) {
+        debugPrint('TTS: Failed to apply noise suppression: $e');
+      }
       
       // Adjust playback speed based on user setting and sample rate correction.
-      // The Piper plugin hardcodes 22050Hz in the WAV header, but the model 
-      // may produce audio at a different rate (e.g. 16000Hz or 44100Hz).
-      // We calculate a correction factor to ensure it sounds natural.
+      // The Piper plugin hardcodes 22050Hz in the WAV header.
+      // We calculate the correction factor based on the actual sample rate from the model config.
       double speedCorrection = _sampleRate / 22050.0;
-      debugPrint('TTS: Applying speed correction: $speedCorrection (Sample Rate: $_sampleRate / Header: 22050)');
+      double finalSpeed = _speechRate * speedCorrection;
       
-      await _player.setSpeed(_speechRate * speedCorrection);
+      debugPrint('TTS: Playing chunk $index. SampleRate: $_sampleRate, HeaderRate: 22050, UserRate: $_speechRate, AppliedSpeed: $finalSpeed');
+      
+      await _player.setSpeed(finalSpeed);
       await _player.setPitch(_pitch);
       
       // Update state to playing BEFORE calling play so UI can react immediately
@@ -438,32 +512,30 @@ class TtsService extends ChangeNotifier {
       // Stop current playback if any
       await stop();
 
-      _state = TtsState.loading;
-      notifyListeners();
-
-      debugPrint('TTS: Initializing engine...');
-      // Reset state to idle to force initialize() to actually run
-      _state = TtsState.idle; 
+      debugPrint('TTS: Ensuring engine is initialized...');
       await initialize();
       
       // Wait for engine to be ready with a timeout
       int retryCount = 0;
-      while (_state == TtsState.loading && retryCount < 10) {
-        debugPrint('TTS: Engine still loading, waiting (attempt $retryCount)...');
-        await Future.delayed(const Duration(milliseconds: 300));
+      while (_state == TtsState.loading && retryCount < 50) { // Increased timeout for slow devices
+        await Future.delayed(const Duration(milliseconds: 200));
         retryCount++;
       }
       
-      debugPrint('TTS: Engine state before chunking: $_state');
+      debugPrint('TTS: Engine state before chunking: $_state (Loaded: $_isEngineLoaded)');
 
-      if (_state == TtsState.ready) {
+      if (_isEngineLoaded) {
+        _state = TtsState.ready; // Ensure we are in ready state if loaded
         _currentText = text;
         _chunks = _splitIntoChunks(text);
         _chunkIndex = 0;
         debugPrint('TTS: Split into ${_chunks.length} chunks');
         
         if (_chunks.isNotEmpty) {
-          await _synthesizeAndPlayChunk(0);
+          // Double check we haven't been stopped in the meantime
+          if (_currentText == text) {
+            await _synthesizeAndPlayChunk(0);
+          }
         } else {
           debugPrint('TTS: No chunks to play');
           _state = TtsState.ready;
@@ -481,6 +553,72 @@ class TtsService extends ChangeNotifier {
       _state = TtsState.error;
       notifyListeners();
     }
+  }
+
+  Future<void> nextSentence() async {
+    if (_chunkIndex < _chunks.length - 1) {
+      await _player.stop(); // Stop current playback immediately
+      _chunkIndex++;
+      await _synthesizeAndPlayChunk(_chunkIndex);
+    }
+  }
+
+  Future<void> previousSentence() async {
+    if (_chunkIndex > 0) {
+      await _player.stop();
+      _chunkIndex--;
+      await _synthesizeAndPlayChunk(_chunkIndex);
+    }
+  }
+
+  Future<void> nextParagraph() async {
+    if (_chunks.isEmpty) return;
+    
+    // Find the first paragraph start index that is greater than current index
+    int nextParaIdx = -1;
+    for (int startIndex in _paragraphStartIndices) {
+      if (startIndex > _chunkIndex) {
+        nextParaIdx = startIndex;
+        break;
+      }
+    }
+
+    if (nextParaIdx != -1) {
+      await _player.stop();
+      _chunkIndex = nextParaIdx;
+      await _synthesizeAndPlayChunk(_chunkIndex);
+    } else {
+      // If no next paragraph, maybe jump to the end or stop?
+      // For now, let's just stop or go to last chunk
+      await stop();
+    }
+  }
+
+  Future<void> previousParagraph() async {
+    if (_chunks.isEmpty) return;
+
+    // Find the paragraph that the current chunk belongs to
+    int currentParaIdx = 0;
+    for (int i = 0; i < _paragraphStartIndices.length; i++) {
+      if (_paragraphStartIndices[i] <= _chunkIndex) {
+        currentParaIdx = i;
+      } else {
+        break;
+      }
+    }
+
+    // If we are at the start of a paragraph, go to the previous one
+    // Otherwise, go to the start of the current paragraph
+    int targetChunkIdx;
+    if (_chunkIndex == _paragraphStartIndices[currentParaIdx] && currentParaIdx > 0) {
+      targetChunkIdx = _paragraphStartIndices[currentParaIdx - 1];
+    } else {
+      targetChunkIdx = _paragraphStartIndices[currentParaIdx];
+    }
+
+    await _player.stop();
+    _chunkIndex = targetChunkIdx;
+    await _synthesizeAndPlayChunk(_chunkIndex);
   }
 
   Future<void> pause() async {
@@ -503,7 +641,26 @@ class TtsService extends ChangeNotifier {
     _chunks = [];
     _chunkIndex = 0;
     await _player.stop();
-    _state = TtsState.ready;
+    try {
+      await _audioEffectChannel.invokeMethod('releaseNoiseSuppression');
+    } catch (_) {}
+    if (_isEngineLoaded) {
+      _state = TtsState.ready;
+    } else {
+      _state = TtsState.idle;
+    }
+    
+    // Clean up all temp files on stop
+    for (final path in _tempFiles) {
+      try {
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    }
+    _tempFiles.clear();
+
     notifyListeners();
   }
 

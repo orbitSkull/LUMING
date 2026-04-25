@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.da_pub_reader"
+    namespace = "com.orbitskull.luming"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,7 +20,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.da_pub_reader"
+        applicationId = "com.orbitskull.luming"
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

@@ -7,6 +7,7 @@ import '../providers/reader_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import '../services/tts_service.dart';
+import '../models/piper_voice.dart';
 import 'package:just_audio/just_audio.dart' show ProcessingState;
 
 class ReaderScreen extends StatefulWidget {
@@ -38,11 +39,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
   
   int _lastChunkIndex = -1;
 
+  bool _showUI = true;
+
   @override
   void initState() {
     super.initState();
     _currentChapterIndex = widget.startChapter;
     _loadBook();
+    // Setup TTS auto-next chapter
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final tts = Provider.of<TtsService>(context, listen: false);
+      tts.onChapterFinished = () {
+        if (_currentChapterIndex < _chapters.length - 1) {
+          _nextChapter();
+          // After changing chapter, start speaking the new chapter
+          Future.delayed(const Duration(milliseconds: 1000), () {
+            if (mounted) {
+              final newContent = _stripHtml(_chapters[_currentChapterIndex].htmlContent ?? '');
+              Provider.of<TtsService>(context, listen: false).speak(newContent);
+            }
+          });
+        }
+      };
+    });
   }
 
   @override
@@ -135,7 +154,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
       }
     }
 
-    return chapters;
+    // Filter out empty chapters that might just be containers
+    return chapters.where((c) => (c.htmlContent ?? '').trim().isNotEmpty).toList();
   }
 
   List<EpubChapter> _extractSubChapters(List<EpubChapter> subChapters) {
@@ -213,24 +233,30 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final isDark = settings.darkMode;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_book?.title ?? 'Reading'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.text_fields),
-            onPressed: () => _showSettingsSheet(context),
-            tooltip: 'Text Settings',
-          ),
-          if (_chapters.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.list),
-              onPressed: () => _showChapterList(context),
-              tooltip: 'Chapters',
-            ),
-        ],
-      ),
+      extendBody: true,
+      extendBodyBehindAppBar: true,
+      appBar: _showUI 
+        ? AppBar(
+            title: Text(_book?.title ?? 'Reading'),
+            backgroundColor: isDark ? Colors.black.withOpacity(0.7) : Colors.white.withOpacity(0.7),
+            elevation: 0,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.text_fields),
+                onPressed: () => _showSettingsSheet(context),
+                tooltip: 'Text Settings',
+              ),
+              if (_chapters.isNotEmpty)
+                IconButton(
+                  icon: const Icon(Icons.list),
+                  onPressed: () => _showChapterList(context),
+                  tooltip: 'Chapters',
+                ),
+            ],
+          )
+        : null,
       body: _buildBody(settings, isDark),
-      bottomNavigationBar: _buildNavigationBar(),
+      bottomNavigationBar: _showUI ? _buildNavigationBar() : null,
     );
   }
 
@@ -288,32 +314,56 @@ class _ReaderScreenState extends State<ReaderScreen> {
         if (tts.isPlaying && currentText != null) {
           try {
             final highlightColor = isDark ? 'rgba(255, 255, 0, 0.3)' : 'rgba(255, 255, 0, 0.5)';
-            // We use a specific ID to find it for scrolling and styling
-            if (displayContent.contains(currentText)) {
-               displayContent = displayContent.replaceFirst(
-                currentText, 
-                '<span id="current-reading-chunk" style="background-color: $highlightColor; border-radius: 4px; padding: 2px 0;">$currentText</span>'
+            // We use a more flexible regex that ignores differences in whitespace and newlines
+            // but still targets the exact chunk text.
+            final escapedText = RegExp.escape(currentText)
+                .replaceAll(r'\ ', r'\s+'); // Allow any whitespace/newline variation
+            
+            final regex = RegExp(escapedText, multiLine: true);
+            
+            if (regex.hasMatch(displayContent)) {
+               displayContent = displayContent.replaceFirstMapped(
+                regex, 
+                (match) => '<readinghighlight id="current-reading-chunk" style="background-color: $highlightColor; border-radius: 4px; padding: 2px 0;">${match.group(0)}</readinghighlight>'
               );
+            } else {
+              // Fallback: If exact match fails due to HTML tags inside a sentence, 
+              // we try to find it by splitting into words, but for now we'll log it.
+              debugPrint('TTS Highlighting: Could not find match for chunk: ${currentText.substring(0, 15)}...');
             }
-          } catch (_) {}
+          } catch (e) {
+            debugPrint('TTS Highlighting Error: $e');
+          }
         }
 
         return Stack(
           children: [
-            Container(
-              color: backgroundColor,
-              child: SingleChildScrollView(
-                controller: _scrollController,
-                padding: const EdgeInsets.all(16),
-                child: Html(
-                  key: _htmlKey,
-                  data: displayContent,
-                  // Use extensions to catch our highlighted span and attach the key
-                  extensions: [
-                    TagExtension(
-                      tagsToExtend: {"span"},
-                      builder: (extensionContext) {
-                        if (extensionContext.attributes['id'] == 'current-reading-chunk') {
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  _showUI = !_showUI;
+                });
+              },
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                color: backgroundColor,
+                height: double.infinity,
+                width: double.infinity,
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  padding: EdgeInsets.fromLTRB(
+                    16, 
+                    _showUI ? kToolbarHeight + 40 : 40, 
+                    16, 
+                    _showUI ? 100 : 40
+                  ),
+                  child: Html(
+                    key: _htmlKey,
+                    data: displayContent,
+                    extensions: [
+                      TagExtension(
+                        tagsToExtend: {"readinghighlight"},
+                        builder: (extensionContext) {
                           return Text.rich(
                             TextSpan(
                               text: extensionContext.element?.text ?? "",
@@ -321,84 +371,85 @@ class _ReaderScreenState extends State<ReaderScreen> {
                             ),
                             key: _highlightKey,
                           );
-                        }
-                        return const SizedBox.shrink();
-                      },
-                    ),
-                  ],
-                  style: {
-                    'body': Style(
-                      fontSize: FontSize(settings.fontSize),
-                      lineHeight: LineHeight(settings.lineHeight),
-                      color: textColor,
-                      backgroundColor: backgroundColor,
-                      fontFamily: settings.fontFamily,
-                      margin: Margins.zero,
-                      padding: HtmlPaddings.zero,
-                    ),
-                    'p': Style(
-                      margin: Margins.only(bottom: 16),
-                      fontSize: FontSize(settings.fontSize),
-                      lineHeight: LineHeight(settings.lineHeight),
-                      color: textColor,
-                    ),
-                    'h1': Style(
-                      fontSize: FontSize(settings.fontSize * 1.8),
-                      fontWeight: FontWeight.bold,
-                      margin: Margins.only(top: 24, bottom: 16),
-                      color: textColor,
-                    ),
-                    'h2': Style(
-                      fontSize: FontSize(settings.fontSize * 1.5),
-                      fontWeight: FontWeight.bold,
-                      margin: Margins.only(top: 20, bottom: 12),
-                      color: textColor,
-                    ),
-                    'h3': Style(
-                      fontSize: FontSize(settings.fontSize * 1.3),
-                      fontWeight: FontWeight.bold,
-                      margin: Margins.only(top: 16, bottom: 10),
-                      color: textColor,
-                    ),
-                    'div': Style(
-                      fontSize: FontSize(settings.fontSize),
-                      lineHeight: LineHeight(settings.lineHeight),
-                      color: textColor,
-                    ),
-                    'span': Style(
-                      fontSize: FontSize(settings.fontSize),
-                      color: textColor,
-                    ),
-                    'li': Style(
-                      fontSize: FontSize(settings.fontSize),
-                      color: textColor,
-                    ),
-                  },
+                        },
+                      ),
+                    ],
+                    style: {
+                      'body': Style(
+                        fontSize: FontSize(settings.fontSize),
+                        lineHeight: LineHeight(settings.lineHeight),
+                        color: textColor,
+                        backgroundColor: backgroundColor,
+                        fontFamily: settings.fontFamily,
+                        margin: Margins.zero,
+                        padding: HtmlPaddings.zero,
+                      ),
+                      'p': Style(
+                        margin: Margins.only(bottom: 16),
+                        fontSize: FontSize(settings.fontSize),
+                        lineHeight: LineHeight(settings.lineHeight),
+                        color: textColor,
+                      ),
+                      'h1': Style(
+                        fontSize: FontSize(settings.fontSize * 1.8),
+                        fontWeight: FontWeight.bold,
+                        margin: Margins.only(top: 24, bottom: 16),
+                        color: textColor,
+                      ),
+                      'h2': Style(
+                        fontSize: FontSize(settings.fontSize * 1.5),
+                        fontWeight: FontWeight.bold,
+                        margin: Margins.only(top: 20, bottom: 12),
+                        color: textColor,
+                      ),
+                      'h3': Style(
+                        fontSize: FontSize(settings.fontSize * 1.3),
+                        fontWeight: FontWeight.bold,
+                        margin: Margins.only(top: 16, bottom: 10),
+                        color: textColor,
+                      ),
+                      'div': Style(
+                        fontSize: FontSize(settings.fontSize),
+                        lineHeight: LineHeight(settings.lineHeight),
+                        color: textColor,
+                      ),
+                      'span': Style(
+                        fontSize: FontSize(settings.fontSize),
+                        color: textColor,
+                      ),
+                      'li': Style(
+                        fontSize: FontSize(settings.fontSize),
+                        color: textColor,
+                      ),
+                    },
+                  ),
                 ),
               ),
             ),
-            if (tts.isPlaying)
+            if (tts.isPlaying || tts.state == TtsState.loading)
               Positioned(
-                top: 8,
+                top: _showUI ? kToolbarHeight + 10 : 30,
                 left: 8,
                 right: 8,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.9),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.volume_up, color: Colors.white, size: 16),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Playing: Chunk ${tts.currentChunkIndex + 1}/${tts.totalChunks}',
-                        style: const TextStyle(color: Colors.white, fontSize: 12),
-                      ),
-                    ],
+                child: IgnorePointer(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.volume_up, color: Colors.white, size: 16),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Playing: Chunk ${tts.currentChunkIndex + 1}/${tts.totalChunks}',
+                          style: const TextStyle(color: Colors.white, fontSize: 12),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -414,6 +465,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final canGoBack = _currentChapterIndex > 0;
     final canGoForward = _currentChapterIndex < _chapters.length - 1;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tts = Provider.of<TtsService>(context);
+
+    // If TTS is active (playing, loading or paused), show TTS specific footer
+    if (tts.state == TtsState.playing || tts.state == TtsState.loading || tts.state == TtsState.paused) {
+      return _buildTtsFooter(isDark);
+    }
 
     return Container(
       color: isDark ? Colors.grey[900] : Colors.grey[100],
@@ -428,14 +485,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
                 icon: const Icon(Icons.chevron_left),
                 label: const Text('Previous'),
               ),
-              StreamBuilder(
-                stream: Provider.of<TtsService>(context, listen: false).positionStream,
-                builder: (context, snapshot) {
-                  return Text(
-                    '${_currentChapterIndex + 1} / ${_chapters.length}',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  );
-                },
+              Text(
+                '${_currentChapterIndex + 1} / ${_chapters.length}',
+                style: Theme.of(context).textTheme.bodyMedium,
               ),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -455,73 +507,71 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
+  Widget _buildTtsFooter(bool isDark) {
+    final tts = Provider.of<TtsService>(context, listen: false);
+    return Container(
+      color: isDark ? Colors.blueGrey[900] : Colors.blue[50],
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.first_page),
+                  onPressed: () => tts.previousParagraph(),
+                  tooltip: 'Prev Paragraph',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.navigate_before),
+                  onPressed: () => tts.previousSentence(),
+                  tooltip: 'Prev Sentence',
+                ),
+                FloatingActionButton.small(
+                  onPressed: () {
+                    if (tts.state == TtsState.playing) {
+                      tts.pause();
+                    } else {
+                      tts.resume();
+                    }
+                  },
+                  child: Icon(tts.state == TtsState.playing ? Icons.pause : Icons.play_arrow),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.navigate_next),
+                  onPressed: () => tts.nextSentence(),
+                  tooltip: 'Next Sentence',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.last_page),
+                  onPressed: () => tts.nextParagraph(),
+                  tooltip: 'Next Paragraph',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.stop_circle_outlined, color: Colors.red),
+                  onPressed: () => tts.stop(),
+                  tooltip: 'Stop',
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildTtsButton() {
     return Consumer<TtsService>(
       builder: (context, tts, _) {
-        Widget icon;
-        String tooltip;
-        VoidCallback? onPressed;
-
-        switch (tts.state) {
-          case TtsState.idle:
-            icon = const Icon(Icons.volume_up);
-            tooltip = 'Read aloud';
-            onPressed = () => _speakCurrentChapter(tts);
-            break;
-          case TtsState.loading:
-            icon = const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            );
-            tooltip = 'Loading...';
-            onPressed = null;
-            break;
-          case TtsState.ready:
-            icon = const Icon(Icons.play_arrow);
-            tooltip = 'Read aloud';
-            onPressed = () => _speakCurrentChapter(tts);
-            break;
-          case TtsState.playing:
-            icon = const Icon(Icons.pause);
-            tooltip = 'Pause';
-            onPressed = () => tts.pause();
-            break;
-          case TtsState.paused:
-            icon = const Icon(Icons.play_arrow);
-            tooltip = 'Resume';
-            onPressed = () => tts.resume();
-            break;
-          case TtsState.error:
-            icon = const Icon(Icons.error_outline, color: Colors.red);
-            tooltip = 'Error - Retry';
-            onPressed = () => _speakCurrentChapter(tts);
-            break;
-        }
-
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (tts.state == TtsState.playing || tts.state == TtsState.loading && tts.totalChunks > 0)
-              Padding(
-                padding: const EdgeInsets.only(right: 8.0),
-                child: Text(
-                  '${tts.currentChunkIndex + 1}/${tts.totalChunks}',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-              ),
-            IconButton(
-              icon: icon,
-              onPressed: onPressed,
-              tooltip: tooltip,
-            ),
-            if (tts.state == TtsState.playing || tts.state == TtsState.paused)
-              IconButton(
-                icon: const Icon(Icons.stop),
-                onPressed: () => tts.stop(),
-                tooltip: 'Stop',
-              ),
-          ],
+        return GestureDetector(
+          onLongPress: () => _showTtsQuickSettings(context, tts),
+          child: IconButton(
+            icon: const Icon(Icons.volume_up),
+            onPressed: () => _speakCurrentChapter(tts),
+            tooltip: 'Start Reading',
+          ),
         );
       },
     );
@@ -545,10 +595,205 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   String _stripHtml(String html) {
-    return html
-        .replaceAll(RegExp(r'<[^>]*>'), ' ')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
+    // Remove scripts and styles
+    String content = html.replaceAll(RegExp(r'<(script|style)[^>]*>.*?</\1>', dotAll: true), '');
+    // Replace <br>, <p>, <div> tags with newlines to preserve sentence boundaries
+    content = content.replaceAll(RegExp(r'<(br|p|div|li|h[1-6])[^>]*>', caseSensitive: false), '\n');
+    // Strip all other HTML tags
+    content = content.replaceAll(RegExp(r'<[^>]*>'), ' ');
+    // Decode HTML entities (basic ones)
+    content = content
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'");
+    // Standardize whitespace
+    return content.replaceAll(RegExp(r' +'), ' ').replaceAll(RegExp(r'\n+'), '\n').trim();
+  }
+
+  void _showTtsPlaybackControls(BuildContext context, TtsService tts) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Consumer<TtsService>(
+        builder: (context, tts, _) => Container(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Playback Controls',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Chunk ${tts.currentChunkIndex + 1} of ${tts.totalChunks}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.first_page),
+                    onPressed: () => tts.previousParagraph(),
+                    tooltip: 'Previous Paragraph',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.navigate_before),
+                    onPressed: () => tts.previousSentence(),
+                    tooltip: 'Previous Sentence',
+                  ),
+                  FloatingActionButton(
+                    onPressed: () {
+                      if (tts.state == TtsState.playing) {
+                        tts.pause();
+                      } else {
+                        tts.resume();
+                      }
+                    },
+                    child: Icon(tts.state == TtsState.playing ? Icons.pause : Icons.play_arrow),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.navigate_next),
+                    onPressed: () => tts.nextSentence(),
+                    tooltip: 'Next Sentence',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.last_page),
+                    onPressed: () => tts.nextParagraph(),
+                    tooltip: 'Next Paragraph',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      tts.stop();
+                      Navigator.pop(context);
+                    },
+                    icon: const Icon(Icons.stop),
+                    label: const Text('Stop TTS'),
+                  ),
+                  const SizedBox(width: 16),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _showTtsQuickSettings(context, tts);
+                    },
+                    icon: const Icon(Icons.settings),
+                    label: const Text('Settings'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showTtsQuickSettings(BuildContext context, TtsService tts) async {
+    final prefs = await SharedPreferences.getInstance();
+    final List<PiperVoice> downloadedVoices = [];
+    
+    for (var voice in tts.availableVoices) {
+      final modelPath = prefs.getString(voice.modelPrefKey);
+      if (modelPath != null && File(modelPath).existsSync()) {
+        downloadedVoices.add(voice);
+      }
+    }
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('TTS Quick Settings', style: Theme.of(context).textTheme.titleLarge),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Text('Speech Rate', style: TextStyle(fontWeight: FontWeight.bold)),
+              Slider(
+                value: tts.speechRate,
+                min: 0.1,
+                max: 4.0,
+                divisions: 39,
+                label: '${tts.speechRate.toStringAsFixed(2)}x',
+                onChanged: (val) {
+                  tts.setSpeechRate(val);
+                  setModalState(() {});
+                },
+              ),
+              const Text('Pitch', style: TextStyle(fontWeight: FontWeight.bold)),
+              Slider(
+                value: tts.pitch,
+                min: 0.1,
+                max: 4.0,
+                divisions: 39,
+                label: tts.pitch.toStringAsFixed(2),
+                onChanged: (val) {
+                  tts.setPitch(val);
+                  setModalState(() {});
+                },
+              ),
+              const SizedBox(height: 16),
+              const Text('Downloaded Voices', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              if (downloadedVoices.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8.0),
+                  child: Text('No other voices downloaded', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                )
+              else
+                SizedBox(
+                  height: 150,
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: downloadedVoices.length,
+                    itemBuilder: (context, index) {
+                      final voice = downloadedVoices[index];
+                      final isSelected = tts.selectedCustomVoice?.key == voice.key;
+                      return ListTile(
+                        title: Text(voice.name),
+                        subtitle: Text(voice.key, style: const TextStyle(fontSize: 10)),
+                        trailing: isSelected ? const Icon(Icons.check_circle, color: Colors.green) : null,
+                        dense: true,
+                        onTap: () {
+                          tts.setCustomVoice(voice);
+                          Navigator.pop(context);
+                        },
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _showSettingsSheet(BuildContext context) {
