@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'reader_screen.dart';
@@ -19,18 +20,38 @@ class _HomeScreenState extends State<HomeScreen> {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['epub'],
+        allowMultiple: false,
       );
 
-      if (result != null && result.files.single.path != null) {
-        if (mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => ReaderScreen(
-                filePath: result.files.single.path!,
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+
+        if (file.path != null) {
+          if (mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ReaderScreen(
+                  filePath: file.path!,
+                ),
               ),
-            ),
-          );
+            );
+          }
+        } else if (file.bytes != null) {
+          final tempDir = Directory.systemTemp;
+          final tempFile = File('${tempDir.path}/${file.name}');
+          await tempFile.writeAsBytes(file.bytes!);
+
+          if (mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ReaderScreen(
+                  filePath: tempFile.path,
+                ),
+              ),
+            );
+          }
         }
       }
     } catch (e) {
