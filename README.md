@@ -1,17 +1,62 @@
 # LUMING
 
-A new Flutter project.
+LUMING is a modern, high-performance Flutter application designed for an immersive reading experience. It specializes in reading EPUB files with advanced Text-to-Speech (TTS) capabilities powered by the Piper TTS engine, offering high-quality, natural-sounding voices offline.
 
-## Getting Started
+![LUMING Logo](assets/logo.png)
 
-This project is a starting point for a Flutter application.
+## 🚀 Key Features
 
-A few resources to get you started if this is your first Flutter project:
+- **Advanced EPUB Reader**: High-fidelity EPUB parsing and rendering for a smooth reading experience.
+- **Offline TTS with Piper**: Integration with the Piper TTS plugin for ultra-fast, neural text-to-speech that works completely offline.
+- **Dynamic Library Management**: Easily import, filter, and organize your digital library with support for bookmarks and reading status.
+- **Customizable Experience**: Tailor your reading with dark mode support, adjustable speech rates, and voice selection.
+- **Privacy First**: No internet required for reading or TTS synthesis.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## 🛠️ Built With
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- **Flutter**: Cross-platform UI framework.
+- **Piper TTS Engine**: Neural text-to-speech for natural voices.
+- **epub_pro**: Robust EPUB handling.
+- **Provider**: Efficient state management.
+- **just_audio**: High-performance audio playback.
+
+## 🔮 Roadmap & Upcoming Features
+
+We are constantly working to make LUMING the ultimate reading companion. Upcoming major features include:
+
+### 🌍 Translation Integration
+Break language barriers with built-in translation.
+- **On-the-fly Translation**: Translate sentences or entire chapters while reading.
+- **Dual-Language Mode**: View original and translated text side-by-side.
+- **Offline Translation Support**: Keeping your reading private and accessible anywhere.
+
+### ✍️ Pub Writer
+Empowering creators to build their own stories.
+- **EPUB Creation**: Tools to write, format, and export your own EPUB files directly from the app.
+- **Rich Text Editor**: A distraction-free environment for writers.
+- **Metadata Management**: Easily add covers, author info, and table of contents to your publications.
+
+## 📦 Installation
+
+LUMING currently targets the Android platform.
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/orbitSkull/LUMING.git
+   ```
+2. Install dependencies:
+   ```bash
+   flutter pub get
+   ```
+3. Run the application:
+   ```bash
+   flutter run
+   ```
+
+## 🤝 Contributing
+
+Contributions are welcome! If you have suggestions for features or improvements, feel free to open an issue or submit a pull request.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
