@@ -275,48 +275,58 @@ class TtsService extends ChangeNotifier {
   }
 
   List<String> _splitIntoChunks(String text) {
-    // Regex to split by sentences while keeping punctuation
-    // We want to split at . ! or ? followed by space or end of string.
-    final RegExp sentenceSplitter = RegExp(r'(?<=[.!?])\s+');
-    final List<String> rawSentences = text.split(sentenceSplitter);
-    
+    // Split by paragraphs first
+    final List<String> paragraphs = text.split(RegExp(r'\n+'));
     final List<String> chunks = [];
-    String currentChunk = "";
     
-    for (var sentence in rawSentences) {
-      sentence = sentence.trim();
-      if (sentence.isEmpty) continue;
+    for (var paragraph in paragraphs) {
+      paragraph = paragraph.trim();
+      if (paragraph.isEmpty) continue;
 
-      // If a single sentence is already very long (> 500 chars), 
-      // we must split it to avoid Piper crash, but try to do it at word boundaries.
-      if (sentence.length > 500) {
-        if (currentChunk.isNotEmpty) {
-          chunks.add(currentChunk.trim());
-          currentChunk = "";
-        }
+      // If paragraph is within limits, keep it as one chunk
+      if (paragraph.length <= 500) {
+        chunks.add(paragraph);
+      } else {
+        // Paragraph is too long, split into sentences
+        final RegExp sentenceSplitter = RegExp(r'(?<=[.!?])\s+');
+        final List<String> rawSentences = paragraph.split(sentenceSplitter);
         
-        // Split long sentence into smaller pieces
-        List<String> words = sentence.split(' ');
-        String temp = "";
-        for (var word in words) {
-          if (temp.length + word.length > 450) {
-            chunks.add(temp.trim());
-            temp = word;
+        String currentChunk = "";
+        for (var sentence in rawSentences) {
+          sentence = sentence.trim();
+          if (sentence.isEmpty) continue;
+
+          // If a single sentence is already very long (> 500 chars)
+          if (sentence.length > 500) {
+            if (currentChunk.isNotEmpty) {
+              chunks.add(currentChunk.trim());
+              currentChunk = "";
+            }
+            
+            // Split long sentence into smaller pieces by words
+            List<String> words = sentence.split(' ');
+            String temp = "";
+            for (var word in words) {
+              if (temp.length + word.length > 450) {
+                chunks.add(temp.trim());
+                temp = word;
+              } else {
+                temp = temp.isEmpty ? word : "$temp $word";
+              }
+            }
+            if (temp.isNotEmpty) currentChunk = temp;
+          } else if (currentChunk.isNotEmpty && currentChunk.length + sentence.length > 500) {
+            chunks.add(currentChunk.trim());
+            currentChunk = sentence;
           } else {
-            temp = temp.isEmpty ? word : "$temp $word";
+            currentChunk = currentChunk.isEmpty ? sentence : "$currentChunk $sentence";
           }
         }
-        if (temp.isNotEmpty) currentChunk = temp;
-      } else if (currentChunk.isNotEmpty && currentChunk.length + sentence.length > 500) {
-        chunks.add(currentChunk.trim());
-        currentChunk = sentence;
-      } else {
-        currentChunk = currentChunk.isEmpty ? sentence : "$currentChunk $sentence";
+        
+        if (currentChunk.isNotEmpty) {
+          chunks.add(currentChunk.trim());
+        }
       }
-    }
-    
-    if (currentChunk.isNotEmpty) {
-      chunks.add(currentChunk.trim());
     }
     
     return chunks;
@@ -392,12 +402,24 @@ class TtsService extends ChangeNotifier {
         return;
       }
 
+      // If already playing, stop first to restart with new text
+      if (_state == TtsState.playing || _state == TtsState.loading) {
+        await stop();
+      }
+
       _state = TtsState.loading;
       notifyListeners();
 
       debugPrint('TTS: Initializing engine...');
       await initialize();
-      debugPrint('TTS: Engine state after init: $_state');
+      
+      // Force state check after initialize
+      if (_state != TtsState.ready && _state != TtsState.error) {
+         debugPrint('TTS: Engine still not ready after init, waiting briefly...');
+         await Future.delayed(const Duration(milliseconds: 500));
+      }
+      
+      debugPrint('TTS: Engine state before chunking: $_state');
 
       if (_state == TtsState.ready || _state == TtsState.error) {
         _currentText = text;
@@ -413,7 +435,7 @@ class TtsService extends ChangeNotifier {
           notifyListeners();
         }
       } else {
-        debugPrint('TTS: Engine not ready, state: $_state');
+        debugPrint('TTS: Engine FAILED to reach ready state, current state: $_state');
       }
     } catch (e) {
       debugPrint('TTS: Error in speak(): $e');
