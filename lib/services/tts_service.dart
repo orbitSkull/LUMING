@@ -21,6 +21,7 @@ class TtsService extends ChangeNotifier {
   String? _currentText;
   double _speechRate = 1.0;
   double _pitch = 1.0;
+  int _sampleRate = 22050; // Default Piper sample rate
   
   // Legacy support for PiperVoicePack
   PiperVoicePack _selectedVoicePack = PiperVoicePack.norman;
@@ -141,9 +142,10 @@ class TtsService extends ChangeNotifier {
 
   void setSpeechRate(double rate) {
     _speechRate = rate.clamp(0.5, 2.0);
-    // If we're playing, update the player speed immediately
+    // If we're playing, update the player speed immediately with correction
     if (_state == TtsState.playing || _state == TtsState.paused) {
-      _player.setSpeed(_speechRate);
+      double speedCorrection = _sampleRate / 22050.0;
+      _player.setSpeed(_speechRate * speedCorrection);
     }
     notifyListeners();
   }
@@ -182,6 +184,17 @@ class TtsService extends ChangeNotifier {
         final configPath = prefs.getString(_selectedCustomVoice!.configPrefKey);
         
         if (modelPath != null && configPath != null && File(modelPath).existsSync() && File(configPath).existsSync()) {
+          // Extract sample rate from config if possible
+          try {
+            final configContent = await File(configPath).readAsString();
+            final configJson = json.decode(configContent);
+            _sampleRate = configJson['audio']?['sample_rate'] ?? 22050;
+            debugPrint('TTS: Detected sample rate: $_sampleRate');
+          } catch (e) {
+            _sampleRate = 22050;
+            debugPrint('TTS: Could not parse config for sample rate, using default 22050');
+          }
+
           await _tts.loadViaPath(modelPath: modelPath, configPath: configPath);
           _state = TtsState.ready;
         } else {
@@ -189,6 +202,7 @@ class TtsService extends ChangeNotifier {
         }
       } else {
         await _tts.loadViaVoicePack(_selectedVoicePack);
+        _sampleRate = 22050; // PiperVoicePack defaults
         _state = TtsState.ready;
       }
     } catch (e) {
@@ -383,12 +397,14 @@ class TtsService extends ChangeNotifier {
       // Load the audio file
       await _player.setFilePath(outputPath);
       
-      // Adjust playback speed based on user setting.
-      // Piper voices are usually 22050Hz. If they sound too fast, 
-      // it might be because the player is using a default of 44100Hz.
-      // We apply the speech rate multiplier. 
-      // If 1.0 is still too fast, we may need to scale the base.
-      await _player.setSpeed(_speechRate);
+      // Adjust playback speed based on user setting and sample rate correction.
+      // The Piper plugin hardcodes 22050Hz in the WAV header, but the model 
+      // may produce audio at a different rate (e.g. 16000Hz or 44100Hz).
+      // We calculate a correction factor to ensure it sounds natural.
+      double speedCorrection = _sampleRate / 22050.0;
+      debugPrint('TTS: Applying speed correction: $speedCorrection (Sample Rate: $_sampleRate / Header: 22050)');
+      
+      await _player.setSpeed(_speechRate * speedCorrection);
       await _player.setPitch(_pitch);
       
       // Update state to playing BEFORE calling play so UI can react immediately
