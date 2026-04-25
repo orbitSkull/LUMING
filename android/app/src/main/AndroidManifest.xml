@@ -1,6 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Permissions for file access and storage -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
-        android:label="da_pub_reader"
+        android:label="DaPub Reader"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
