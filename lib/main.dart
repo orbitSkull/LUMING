@@ -520,7 +520,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     }).toList(),
                   ),
                   trailing: const Icon(Icons.more_vert),
-                  onTap: () => _showBookOptions(book),
+                  onTap: () => _openBook(book),
                   onLongPress: () => _showBookOptions(book),
                 );
               },
@@ -530,11 +530,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       body: _buildBody(),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => _onNavTap(index),
+        type: BottomNavigationBarType.fixed,
+        backgroundColor: isDark ? Colors.grey[900] : Colors.white,
+        selectedItemColor: isDark ? Colors.deepPurple[300] : Colors.deepPurple,
+        unselectedItemColor: isDark ? Colors.grey[500] : Colors.grey[600],
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.library_books_outlined),
@@ -681,13 +686,36 @@ class _BookOptionsSheet extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: onDelete,
-              icon: const Icon(Icons.delete, color: Colors.red),
+              onPressed: () => _confirmDelete(context),
+              icon: const Icon(Icons.delete_forever, color: Colors.red),
               label: const Text(
                 'Remove from Library',
                 style: TextStyle(color: Colors.red),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDelete(BuildContext ctx) {
+    showDialog(
+      context: ctx,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove Book'),
+        content: Text('Remove "${book.title}" from library?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              onDelete();
+            },
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
