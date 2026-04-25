@@ -324,6 +324,7 @@ class TtsService extends ChangeNotifier {
 
   Future<void> _synthesizeAndPlayChunk(int index) async {
     if (index >= _chunks.length) {
+      debugPrint('TTS: All chunks finished');
       _state = TtsState.ready;
       notifyListeners();
       return;
@@ -335,22 +336,43 @@ class TtsService extends ChangeNotifier {
       notifyListeners();
 
       final text = _chunks[index];
-      final tempDir = await getTemporaryDirectory();
+      debugPrint('TTS: Synthesizing chunk $index: ${text.substring(0, text.length > 20 ? 20 : text.length)}...');
       
-      final outputPath = '${tempDir.path}/piper_part_${DateTime.now().millisecondsSinceEpoch}.wav';
+      final tempDir = await getTemporaryDirectory();
+      final String outputPath = '${tempDir.path}/piper_part_${DateTime.now().millisecondsSinceEpoch}.wav'.replaceAll("\\", "/");
+      
+      debugPrint('TTS: Output path: $outputPath');
       
       await _tts.synthesizeToFile(
         text: text,
         outputPath: outputPath,
       );
       
+      final file = File(outputPath);
+      if (await file.exists()) {
+        final size = await file.length();
+        debugPrint('TTS: Synthesis successful, file size: $size bytes');
+        if (size == 0) {
+           throw Exception('Synthesized file is empty');
+        }
+      } else {
+        // Fallback: check if the plugin returned the file elsewhere or if it's a path issue
+        debugPrint('TTS: File NOT found at $outputPath, checking if synthesis failed silently');
+        throw Exception('Synthesized file does not exist at $outputPath');
+      }
+
       _audioPath = outputPath;
       await _player.setFilePath(outputPath);
-      _player.play(); // Start playback but state is set below after UI can react
       
+      // Update state to playing BEFORE calling play so UI can react immediately
       _state = TtsState.playing;
       notifyListeners();
-    } catch (e) {
+      
+      debugPrint('TTS: Starting playback for chunk $index');
+      await _player.play();
+    } catch (e, stack) {
+      debugPrint('TTS: Error in _synthesizeAndPlayChunk: $e');
+      debugPrint('TTS: Stack trace: $stack');
       _errorMessage = 'Synthesis error: $e';
       _state = TtsState.error;
       notifyListeners();
@@ -358,10 +380,12 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> speak(String text) async {
+    debugPrint('TTS: speak() called with text length: ${text.length}');
     if (text.isEmpty) return;
 
     try {
       if (_state == TtsState.paused) {
+        debugPrint('TTS: Resuming from pause');
         await _player.play();
         _state = TtsState.playing;
         notifyListeners();
@@ -371,25 +395,28 @@ class TtsService extends ChangeNotifier {
       _state = TtsState.loading;
       notifyListeners();
 
+      debugPrint('TTS: Initializing engine...');
       await initialize();
+      debugPrint('TTS: Engine state after init: $_state');
 
       if (_state == TtsState.ready || _state == TtsState.error) {
         _currentText = text;
         _chunks = _splitIntoChunks(text);
         _chunkIndex = 0;
+        debugPrint('TTS: Split into ${_chunks.length} chunks');
         
         if (_chunks.isNotEmpty) {
-          // Listen for player state to trigger next chunk
-          _player.playerStateStream.listen((state) {
-            if (state.processingState == ProcessingState.completed && _state == TtsState.playing) {
-              _synthesizeAndPlayChunk(_chunkIndex + 1);
-            }
-          }, cancelOnError: false);
-
           await _synthesizeAndPlayChunk(0);
+        } else {
+          debugPrint('TTS: No chunks to play');
+          _state = TtsState.ready;
+          notifyListeners();
         }
+      } else {
+        debugPrint('TTS: Engine not ready, state: $_state');
       }
     } catch (e) {
+      debugPrint('TTS: Error in speak(): $e');
       _errorMessage = e.toString();
       _state = TtsState.error;
       notifyListeners();
