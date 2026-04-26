@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'writer_screen.dart';
@@ -104,28 +105,33 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
       _projects = [];
     });
 
-    if (_projectFolderPath != null) {
-      try {
-        final folder = Directory(_projectFolderPath!);
-        if (await folder.exists()) {
-          final files = folder.listSync();
-          for (final entity in files) {
-            if (entity is File && entity.path.endsWith('.json')) {
-              try {
-                final content = await entity.readAsString();
-                final json = jsonDecode(content);
-                final project = WriterProject.fromJson(json);
-                _projects.add(project);
-              } catch (e) {
-                debugPrint('Error loading project ${entity.path}: $e');
-              }
-            }
+    if (_projectFolderPath == null) {
+      final appDir = await getApplicationDocumentsDirectory();
+      final newPath = '${appDir.path}/LUMING_Projects';
+      await prefs.setString('writerProjectFolder', newPath);
+      _projectFolderPath = newPath;
+    }
+
+    final folder = Directory(_projectFolderPath!);
+    if (!await folder.exists()) {
+      await folder.create(recursive: true);
+    }
+    
+    if (await folder.exists()) {
+      final files = folder.listSync();
+      for (final entity in files) {
+        if (entity is File && entity.path.endsWith('.json')) {
+          try {
+            final content = await entity.readAsString();
+            final json = jsonDecode(content);
+            final project = WriterProject.fromJson(json);
+            _projects.add(project);
+          } catch (e) {
+            debugPrint('Error loading project ${entity.path}: $e');
           }
-          _projects.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
         }
-      } catch (e) {
-        debugPrint('Error loading projects: $e');
       }
+      _projects.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     }
 
     setState(() {
@@ -206,6 +212,7 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
         setState(() {
           _projectFolderPath = result;
         });
+        _loadProjects();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Project folder set: $result')),
