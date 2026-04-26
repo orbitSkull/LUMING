@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'writer_screen.dart';
@@ -105,38 +104,62 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
       _projects = [];
     });
 
-    if (_projectFolderPath == null) {
-      final appDir = await getApplicationDocumentsDirectory();
-      final newPath = '${appDir.path}/LUMING_Projects';
-      await prefs.setString('writerProjectFolder', newPath);
-      _projectFolderPath = newPath;
-    }
-
-    final folder = Directory(_projectFolderPath!);
-    if (!await folder.exists()) {
-      await folder.create(recursive: true);
-    }
-    
-    if (await folder.exists()) {
-      final files = folder.listSync();
-      for (final entity in files) {
-        if (entity is File && entity.path.endsWith('.json')) {
-          try {
-            final content = await entity.readAsString();
-            final json = jsonDecode(content);
-            final project = WriterProject.fromJson(json);
-            _projects.add(project);
-          } catch (e) {
-            debugPrint('Error loading project ${entity.path}: $e');
+    if (_projectFolderPath != null) {
+      final folder = Directory(_projectFolderPath!);
+      if (!await folder.exists()) {
+        await folder.create(recursive: true);
+      }
+      
+      if (await folder.exists()) {
+        final files = folder.listSync();
+        for (final entity in files) {
+          if (entity is File && entity.path.endsWith('.json')) {
+            try {
+              final content = await entity.readAsString();
+              final json = jsonDecode(content);
+              final project = WriterProject.fromJson(json);
+              _projects.add(project);
+            } catch (e) {
+              debugPrint('Error loading project ${entity.path}: $e');
+            }
           }
         }
+        _projects.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       }
-      _projects.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     }
 
     setState(() {
       _isLoading = false;
     });
+  }
+
+  Future<void> _selectProjectFolder() async {
+    try {
+      final result = await FilePicker.platform.getDirectoryPath();
+      if (result != null) {
+        final folder = Directory(result);
+        if (!await folder.exists()) {
+          await folder.create(recursive: true);
+        }
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('writerProjectFolder', result);
+        setState(() {
+          _projectFolderPath = result;
+        });
+        _loadProjects();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Project folder set: $result')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _saveProject(WriterProject project) async {
@@ -201,31 +224,6 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
         ),
       ),
     );
-  }
-
-  Future<void> _selectProjectFolder() async {
-    try {
-      final result = await FilePicker.platform.getDirectoryPath();
-      if (result != null) {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('writerProjectFolder', result);
-        setState(() {
-          _projectFolderPath = result;
-        });
-        _loadProjects();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Project folder set: $result')),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
-    }
   }
 
   void _showNewProjectDialog() {
