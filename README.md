@@ -14,6 +14,7 @@ LUMING is a modern, high-performance Flutter application designed for an immersi
 - [x] **Custom Bookmarks**: Create unlimited custom labels for organizing books.
 - [ ] **LUMING Translation**: Real-time sentence and chapter translation (Coming Soon).
 - [ ] **LUMING Writer**: Distraction-free EPUB creation and publishing tools (Coming Soon).
+- [ ] **IDEABOX**
 - [x] **Official Release**: Stable v1.0.0 builds for Android.
 
 ## 🚀 Key Features

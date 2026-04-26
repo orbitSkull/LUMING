@@ -147,6 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = false;
   int _currentIndex = 0;
   bool _isGridView = false;
+  bool _isWriterMode = false;
 
   @override
   void initState() {
@@ -885,42 +886,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       body: _buildBody(),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (index) => _onNavTap(index),
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: isDark ? Colors.grey[900] : Colors.white,
-        selectedItemColor: isDark ? Colors.deepPurple[300] : Colors.deepPurple,
-        unselectedItemColor: isDark ? Colors.grey[500] : Colors.grey[600],
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.library_books_outlined),
-            activeIcon: Icon(Icons.library_books),
-            label: 'Library',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.play_circle_outline),
-            activeIcon: Icon(Icons.play_circle),
-            label: 'Continue',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart_outlined),
-            activeIcon: Icon(Icons.bar_chart),
-            label: 'Stats',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.edit_outlined),
-            activeIcon: Icon(Icons.edit),
-            label: 'Writer',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.settings_outlined),
-            activeIcon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
+      bottomNavigationBar: _isWriterMode ? _buildWriterNav(isDark) : _buildReaderNav(isDark),
+      floatingActionButton: _isWriterMode ? null : FloatingActionButton(
         onPressed: _isLoading ? null : _openFile,
         child: _isLoading
             ? const SizedBox(
@@ -933,14 +900,104 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildReaderNav(bool isDark) {
+    return BottomNavigationBar(
+      currentIndex: _currentIndex,
+      onTap: (index) => _onNavTap(index),
+      type: BottomNavigationBarType.fixed,
+      backgroundColor: isDark ? Colors.grey[900] : Colors.white,
+      selectedItemColor: isDark ? Colors.deepPurple[300] : Colors.deepPurple,
+      unselectedItemColor: isDark ? Colors.grey[500] : Colors.grey[600],
+      items: const [
+        BottomNavigationBarItem(
+          icon: Icon(Icons.library_books_outlined),
+          activeIcon: Icon(Icons.library_books),
+          label: 'Library',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.play_circle_outline),
+          activeIcon: Icon(Icons.play_circle),
+          label: 'Continue',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.bar_chart_outlined),
+          activeIcon: Icon(Icons.bar_chart),
+          label: 'Stats',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.edit_outlined),
+          activeIcon: Icon(Icons.edit),
+          label: 'Writer',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.settings_outlined),
+          activeIcon: Icon(Icons.settings),
+          label: 'Settings',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWriterNav(bool isDark) {
+    return BottomNavigationBar(
+      currentIndex: _currentIndex,
+      onTap: (index) => _onNavTap(index),
+      type: BottomNavigationBarType.fixed,
+      backgroundColor: isDark ? Colors.teal[900] : Colors.teal[50],
+      selectedItemColor: isDark ? Colors.teal[300] : Colors.teal,
+      unselectedItemColor: isDark ? Colors.grey[500] : Colors.grey[600],
+      items: const [
+        BottomNavigationBarItem(
+          icon: Icon(Icons.folder_outlined),
+          activeIcon: Icon(Icons.folder),
+          label: 'Projects',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.lightbulb_outline),
+          activeIcon: Icon(Icons.lightbulb),
+          label: 'IdeaBox',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.analytics_outlined),
+          activeIcon: Icon(Icons.analytics),
+          label: 'Stats',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.menu_book_outlined),
+          activeIcon: Icon(Icons.menu_book),
+          label: 'Reader',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.settings_outlined),
+          activeIcon: Icon(Icons.settings),
+          label: 'Settings',
+        ),
+      ],
+    );
+  }
+
   Widget _buildBody() {
+    if (_isWriterMode) {
+      switch (_currentIndex) {
+        case 0:
+          return _buildWriterProjects();
+        case 1:
+          return _buildWriterIdeaBox();
+        case 2:
+          return _buildWriterStats();
+        case 3:
+          return _buildLibrary();
+        case 4:
+          return _buildWriterSettings();
+        default:
+          return _buildWriterProjects();
+      }
+    }
     switch (_currentIndex) {
       case 0:
         return _buildLibrary();
       case 2:
         return const StatsScreen();
-      case 3:
-        return const SizedBox.shrink();
       case 4:
         return const SettingsScreen();
       default:
@@ -948,13 +1005,60 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Widget _buildWriterProjects() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Projects'),
+        backgroundColor: Colors.teal,
+      ),
+      body: const Center(
+        child: Text('Writer Projects - Coming Soon', style: TextStyle(color: Colors.teal)),
+      ),
+    );
+  }
+
+  Widget _buildWriterIdeaBox() {
+    return const Scaffold(
+      body: Center(
+        child: Text('Writer IdeaBox - Coming Soon', style: TextStyle(color: Colors.teal)),
+      ),
+    );
+  }
+
+  Widget _buildWriterStats() {
+    return const Scaffold(
+      body: Center(
+        child: Text('Writer Stats - Coming Soon', style: TextStyle(color: Colors.teal)),
+      ),
+    );
+  }
+
+  Widget _buildWriterSettings() {
+    return const Scaffold(
+      body: Center(
+        child: Text('Writer Settings - Coming Soon', style: TextStyle(color: Colors.teal)),
+      ),
+    );
+  }
+
   void _onNavTap(int index) {
+    if (_isWriterMode) {
+      if (index == 3) {
+        setState(() => _isWriterMode = false);
+        return;
+      }
+      setState(() => _currentIndex = index);
+      return;
+    }
     if (index == 1) {
       _continueReading();
       return;
     }
     if (index == 3) {
-      _showWriterToast();
+      setState(() {
+        _isWriterMode = true;
+        _currentIndex = 0;
+      });
       return;
     }
     setState(() => _currentIndex = index);
