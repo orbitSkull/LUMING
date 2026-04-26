@@ -1,8 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import '../providers/reader_settings.dart';
 import '../services/tts_service.dart';
+import '../models/piper_voice.dart';
+import 'settings_screen.dart'; // Import VoiceSelectionModal
 
 class WriterSettingsScreen extends StatefulWidget {
   const WriterSettingsScreen({super.key});
@@ -14,9 +17,6 @@ class WriterSettingsScreen extends StatefulWidget {
 class _WriterSettingsScreenState extends State<WriterSettingsScreen> {
   bool _autoSave = true;
   bool _autoCapitalization = true;
-  double _fontSize = 16.0;
-  double _lineHeight = 1.5;
-  String _fontFamily = 'Sans';
 
   @override
   void initState() {
@@ -29,10 +29,6 @@ class _WriterSettingsScreenState extends State<WriterSettingsScreen> {
     setState(() {
       _autoSave = prefs.getBool('writer_autoSave') ?? true;
       _autoCapitalization = prefs.getBool('writer_autoCapitalization') ?? true;
-      final settings = context.read<ReaderSettings>();
-      _fontSize = prefs.getDouble('writer_fontSize') ?? settings.fontSize;
-      _lineHeight = prefs.getDouble('writer_lineHeight') ?? settings.lineHeight;
-      _fontFamily = prefs.getString('writer_fontFamily') ?? 'Sans';
     });
   }
 
@@ -128,6 +124,12 @@ class _WriterSettingsScreenState extends State<WriterSettingsScreen> {
               ),
             ),
           ),
+          ListTile(
+            title: const Text('Voice Selection'),
+            subtitle: Text(tts.selectedCustomVoice?.name ?? tts.selectedVoice.name),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _showVoiceSelector(context, tts),
+          ),
         ]),
         _buildSection('Writing Behavior', [
           SwitchListTile(
@@ -176,7 +178,7 @@ class _WriterSettingsScreenState extends State<WriterSettingsScreen> {
         _buildSection('About', [
           const ListTile(
             title: Text('Version'),
-            subtitle: Text('1.0.0'),
+            subtitle: Text('1.1.0'),
           ),
           const ListTile(
             title: Text('Developer'),
@@ -229,6 +231,42 @@ class _WriterSettingsScreenState extends State<WriterSettingsScreen> {
         ),
         ...children,
       ],
+    );
+  }
+
+  void _showVoiceSelector(BuildContext context, TtsService tts) async {
+    final prefs = await SharedPreferences.getInstance();
+    Map<String, bool> downloadedStatus = {};
+    for (var voice in tts.availableVoices) {
+      final modelPath = prefs.getString(voice.modelPrefKey);
+      downloadedStatus[voice.key] = modelPath != null && File(modelPath).existsSync();
+    }
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => VoiceSelectionModal(
+        tts: tts,
+        selectedVoicePack: tts.selectedVoice,
+        selectedCustomVoice: tts.selectedCustomVoice,
+        downloadedVoices: downloadedStatus,
+        onVoiceSelected: (voicePack, customVoice) {
+          if (customVoice != null) {
+            tts.setCustomVoice(customVoice);
+          } else if (voicePack != null) {
+            tts.setVoice(voicePack);
+          }
+        },
+        onVoiceDelete: (key) async {
+          final voice = tts.availableVoices.where((v) => v.key == key).firstOrNull;
+          if (voice != null) {
+            await tts.deleteCustomVoice(voice);
+          }
+        },
+      ),
     );
   }
 }

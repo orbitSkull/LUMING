@@ -257,76 +257,115 @@ class _WriterScreenState extends State<WriterScreen> {
     final backgroundColor = isDark ? Colors.grey[900] : Colors.white;
     final textColor = isDark ? Colors.white : Colors.black87;
 
-    if (!_isEditMode) {
-      return GestureDetector(
-        onTap: () => setState(() => _showUI = !_showUI),
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          color: backgroundColor,
-          height: double.infinity,
-          width: double.infinity,
-          padding: EdgeInsets.fromLTRB(16, _showUI ? kToolbarHeight + 40 : 40, 16, _showUI ? 100 : 40),
-          child: SingleChildScrollView(
-            controller: _scrollController,
-            child: Text(
-              _contentController.text,
-              style: TextStyle(fontSize: settings.fontSize, height: settings.lineHeight, color: textColor),
-            ),
-          ),
-        ),
-      );
-    }
+    return Consumer<TtsService>(
+      builder: (context, tts, _) {
+        final currentText = tts.currentChunkText;
+        final isPlaying = tts.state == TtsState.playing || tts.state == TtsState.paused;
+        
+        TextSpan? highlightSpan;
+        if (isPlaying && currentText != null) {
+          final content = _contentController.text;
+          final offset = tts.currentChunkOffset;
+          
+          if (offset < content.length) {
+            // We find the exact piece of text. Since we split the chunks from the plain text 
+            // of the content controller, the offset should match.
+            // However, chunks are trimmed, so we find the index of currentText starting from offset.
+            int startIdx = content.indexOf(currentText, offset);
+            if (startIdx != -1) {
+              highlightSpan = TextSpan(
+                children: [
+                  TextSpan(text: content.substring(0, startIdx)),
+                  TextSpan(
+                    text: content.substring(startIdx, startIdx + currentText.length),
+                    style: TextStyle(backgroundColor: isDark ? Colors.teal.withOpacity(0.4) : Colors.teal.withOpacity(0.2)),
+                  ),
+                  TextSpan(text: content.substring(startIdx + currentText.length)),
+                ],
+              );
+            }
+          }
+        }
 
-    return GestureDetector(
-      onTap: () => setState(() => _showUI = !_showUI),
-      behavior: HitTestBehavior.opaque,
-      child: Stack(
-        children: [
-          Container(
-            color: backgroundColor,
-            height: double.infinity,
-            width: double.infinity,
-            child: SingleChildScrollView(
-              controller: _scrollController,
+        if (!_isEditMode) {
+          return GestureDetector(
+            onTap: () => setState(() => _showUI = !_showUI),
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              color: backgroundColor,
+              height: double.infinity,
+              width: double.infinity,
               padding: EdgeInsets.fromLTRB(16, _showUI ? kToolbarHeight + 40 : 40, 16, _showUI ? 100 : 40),
-              child: TextField(
-                controller: _contentController,
-                maxLines: null,
-                style: TextStyle(fontSize: settings.fontSize, height: settings.lineHeight, color: textColor),
-                cursorColor: Colors.teal,
-                decoration: InputDecoration(
-                  border: InputBorder.none,
-                  hintText: 'Start writing...',
-                  hintStyle: TextStyle(color: textColor.withOpacity(0.4)),
-                ),
-                focusNode: _focusNode,
-                onChanged: (val) {
-                  if (!_hasUnsavedChanges) {
-                    setState(() => _hasUnsavedChanges = true);
-                  }
-                  _updateWordCount();
-                },
+              child: SingleChildScrollView(
+                controller: _scrollController,
+                child: highlightSpan != null 
+                  ? RichText(
+                      text: TextSpan(
+                        style: TextStyle(fontSize: settings.fontSize, height: settings.lineHeight, color: textColor),
+                        children: [highlightSpan],
+                      ),
+                    )
+                  : Text(
+                      _contentController.text,
+                      style: TextStyle(fontSize: settings.fontSize, height: settings.lineHeight, color: textColor),
+                    ),
               ),
             ),
+          );
+        }
+
+        return GestureDetector(
+          onTap: () => setState(() => _showUI = !_showUI),
+          behavior: HitTestBehavior.opaque,
+          child: Stack(
+            children: [
+              Container(
+                color: backgroundColor,
+                height: double.infinity,
+                width: double.infinity,
+                child: SingleChildScrollView(
+                  controller: _scrollController,
+                  padding: EdgeInsets.fromLTRB(16, _showUI ? kToolbarHeight + 40 : 40, 16, _showUI ? 100 : 40),
+                  child: TextField(
+                    controller: _contentController,
+                    maxLines: null,
+                    style: TextStyle(fontSize: settings.fontSize, height: settings.lineHeight, color: textColor),
+                    cursorColor: Colors.teal,
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      hintText: 'Start writing...',
+                      hintStyle: TextStyle(color: textColor.withOpacity(0.4)),
+                    ),
+                    focusNode: _focusNode,
+                    onChanged: (val) {
+                      if (!_hasUnsavedChanges) {
+                        setState(() => _hasUnsavedChanges = true);
+                      }
+                      _updateWordCount();
+                    },
+                  ),
+                ),
+              ),
+              if (settings.showWordCount && _isEditMode)
+                Positioned(
+                  top: _showUI ? kToolbarHeight + 50 : 16,
+                  right: 16,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      '$_wordCount words',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ),
+            ],
           ),
-          if (settings.showWordCount && _isEditMode)
-            Positioned(
-              top: _showUI ? kToolbarHeight + 50 : 16,
-              right: 16,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Text(
-                  '$_wordCount words',
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
-                ),
-              ),
-            ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -437,11 +476,6 @@ class _WriterScreenState extends State<WriterScreen> {
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_isEditMode)
-              IconButton(
-                icon: Icon(_isListening ? Icons.mic : Icons.mic_none, color: _isListening ? Colors.red : null),
-                onPressed: _toggleListening,
-              ),
             if (!_isEditMode)
               GestureDetector(
                 onLongPress: () => _showTtsQuickSettings(context, tts),
@@ -646,15 +680,6 @@ class _WriterScreenState extends State<WriterScreen> {
                 },
               ),
               const SizedBox(height: 16),
-              ListTile(
-                title: const Text('Voice Typing (Dictation)', style: TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: const Text('Speak to add text to your story'),
-                trailing: Icon(_isListening ? Icons.mic : Icons.mic_none, color: _isListening ? Colors.red : null),
-                onTap: () {
-                  Navigator.pop(context);
-                  _toggleListening();
-                },
-              ),
               const Divider(),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,

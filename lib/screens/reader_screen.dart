@@ -219,7 +219,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
       final chapters = _extractChapters(book);
 
-      final isFirstTime = await _addToLibrary(widget.filePath, book.title ?? 'Untitled', coverPath: coverPath);
+      final isFirstTime = await _addToLibrary(widget.filePath, book.title ?? 'Untitled', coverPath: coverPath, totalChapters: chapters.length);
 
       if (mounted && isFirstTime) {
         _showBookAddedToast();
@@ -230,6 +230,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _chapters = chapters;
         _isLoading = false;
       });
+
+      if (widget.isTts) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final tts = Provider.of<TtsService>(context, listen: false);
+          _speakCurrentChapter(tts, startChunk: widget.startChunk);
+        });
+      }
     } catch (e) {
       setState(() {
         _error = e.toString();
@@ -279,6 +286,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   void _goToChapter(int index) {
     if (index >= 0 && index < _chapters.length) {
+      if (_currentChapterIndex != index) {
+        _lastChunkIndex = -1; // Reset chunk index for new chapter
+      }
       setState(() {
         _currentChapterIndex = index;
       });
@@ -316,7 +326,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
-  Future<bool> _addToLibrary(String filePath, String title, {String? coverPath}) async {
+  Future<bool> _addToLibrary(String filePath, String title, {String? coverPath, int totalChapters = 0}) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final data = prefs.getString('library');
@@ -328,8 +338,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
         );
       }
 
-      final exists = books.any((b) => b['filePath'] == filePath);
-      if (!exists) {
+      final index = books.indexWhere((b) => b['filePath'] == filePath);
+      if (index == -1) {
         books.add({
           'filePath': filePath,
           'title': title,
@@ -337,7 +347,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           'bookmarks': ['all'],
           'addedAt': DateTime.now().toIso8601String(),
           'lastChapter': 0,
-          'totalChapters': _chapters.length,
+          'totalChapters': totalChapters,
         });
         await prefs.setString('library', jsonEncode(books));
         
@@ -346,15 +356,22 @@ class _ReaderScreenState extends State<ReaderScreen> {
         await prefs.setInt('totalBooks', tb + 1);
         
         return true;
-      } else if (coverPath != null) {
-        // Update cover if it was missing or file is gone
-        final index = books.indexWhere((b) => b['filePath'] == filePath);
-        if (index != -1) {
+      } else {
+        bool updated = false;
+        if (coverPath != null) {
           final existingCover = books[index]['coverPath'];
           if (existingCover == null || !File(existingCover).existsSync()) {
             books[index]['coverPath'] = coverPath;
-            await prefs.setString('library', jsonEncode(books));
+            updated = true;
           }
+        }
+        if (totalChapters > 0 && (books[index]['totalChapters'] ?? 0) == 0) {
+          books[index]['totalChapters'] = totalChapters;
+          updated = true;
+        }
+        
+        if (updated) {
+          await prefs.setString('library', jsonEncode(books));
         }
       }
       return false;
@@ -778,27 +795,29 @@ class _ReaderScreenState extends State<ReaderScreen> {
     );
   }
 
-  void _speakCurrentChapter(TtsService tts) async {
+  void _speakCurrentChapter(TtsService tts, {int? startChunk}) async {
     if (_chapters.isNotEmpty && _currentChapterIndex < _chapters.length) {
       final chapter = _chapters[_currentChapterIndex];
       final content = chapter.htmlContent ?? '';
       final plainText = _stripHtml(content);
       if (plainText.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
-        final startChunk = widget.startChunk > 0 
-            ? widget.startChunk 
-            : prefs.getInt('tts_chunk_${widget.filePath}') ?? 0;
         
-        // If we were already speaking this chapter but stopped, we continue.
-        // If we just loaded the chapter, startChunk will be 0 or last saved.
+        int actualStartChunk = 0;
+        if (startChunk != null) {
+          actualStartChunk = startChunk;
+        } else if (_lastChunkIndex >= 0) {
+          actualStartChunk = _lastChunkIndex;
+        } else if (_currentChapterIndex == widget.startChapter) {
+          actualStartChunk = widget.startChunk;
+        }
         
+        if (actualStartChunk <= 0 && _currentChapterIndex == widget.startChapter) {
+           actualStartChunk = prefs.getInt('tts_chunk_${widget.filePath}') ?? 0;
+        }
+
         setState(() {});
-        tts.player.playerStateStream.listen((state) {
-          if (state.processingState == ProcessingState.completed) {
-            // Playback complete
-          }
-        });
-        tts.speak(plainText, startChunkIndex: startChunk);
+        tts.speak(plainText, startChunkIndex: actualStartChunk);
       }
     }
   }

@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'models/bookmark_type.dart';
+import 'models/book_entry.dart';
 import 'screens/reader_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/stats_screen.dart';
@@ -20,54 +21,6 @@ import 'providers/reader_settings.dart';
 import 'services/tts_service.dart';
 import 'services/writer_service.dart';
 
-class BookEntry {
-  final String filePath;
-  final String title;
-  final String? coverPath;
-  final List<BookmarkType> bookmarks;
-  final DateTime addedAt;
-  final int lastChapter;
-  final int totalChapters;
-  final List<String> customLabels;
-
-  BookEntry({
-    required this.filePath,
-    required this.title,
-    this.coverPath,
-    required this.bookmarks,
-    required this.addedAt,
-    this.lastChapter = 0,
-    this.totalChapters = 1,
-    this.customLabels = const [],
-  });
-
-  Map<String, dynamic> toJson() => {
-        'filePath': filePath,
-        'title': title,
-        'coverPath': coverPath,
-        'bookmarks': bookmarks.map((b) => b.name).toList(),
-        'addedAt': addedAt.toIso8601String(),
-        'lastChapter': lastChapter,
-        'totalChapters': totalChapters,
-        'customLabels': customLabels,
-      };
-
-  factory BookEntry.fromJson(Map<String, dynamic> json) => BookEntry(
-        filePath: json['filePath'],
-        title: json['title'],
-        coverPath: json['coverPath'],
-        bookmarks: (json['bookmarks'] as List)
-            .map((b) => BookmarkType.values.firstWhere((e) => e.name == b))
-            .toList(),
-        addedAt: DateTime.parse(json['addedAt']),
-        lastChapter: json['lastChapter'] ?? 0,
-        totalChapters: json['totalChapters'] ?? 1,
-        customLabels: (json['customLabels'] as List?)?.cast<String>() ?? [],
-      );
-
-  String get fileName => filePath.split('/').last;
-  bool get fileExists => File(filePath).existsSync();
-}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -237,13 +190,18 @@ class _HomeScreenState extends State<HomeScreen> {
     final prefs = await SharedPreferences.getInstance();
     final lastPath = prefs.getString('lastOpenedPath');
     if (lastPath != null && File(lastPath).existsSync()) {
-      final chapterIndex = prefs.getInt('chapter_$lastPath') ?? 0;
+      final chapterIndex = prefs.getInt('lastChapterIndex_$lastPath') ?? 0;
+      final isTts = prefs.getBool('lastWasTts_$lastPath') ?? false;
+      final chunkIndex = prefs.getInt('tts_chunk_$lastPath') ?? 0;
+
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => ReaderScreen(
             filePath: lastPath,
             startChapter: chapterIndex,
+            isTts: isTts,
+            startChunk: chunkIndex,
           ),
         ),
       ).then((_) => _loadBooks());
@@ -370,21 +328,11 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       final idx = _books.indexWhere((b) => b.filePath == book.filePath);
       if (idx != -1) {
-        final bookEntry = _books[idx];
-        final customLabels = List<String>.from(bookEntry.customLabels);
+        final customLabels = List<String>.from(_books[idx].customLabels);
         if (!customLabels.contains(name)) {
           customLabels.add(name);
         }
-        _books[idx] = BookEntry(
-          filePath: bookEntry.filePath,
-          title: bookEntry.title,
-          coverPath: bookEntry.coverPath,
-          bookmarks: bookEntry.bookmarks,
-          addedAt: bookEntry.addedAt,
-          lastChapter: bookEntry.lastChapter,
-          totalChapters: bookEntry.totalChapters,
-          customLabels: customLabels,
-        );
+        _books[idx] = _books[idx].copyWith(customLabels: customLabels);
         _saveBooks();
       }
     });
@@ -394,19 +342,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       final idx = _books.indexWhere((b) => b.filePath == book.filePath);
       if (idx != -1) {
-        final bookEntry = _books[idx];
-        final customLabels = List<String>.from(bookEntry.customLabels);
+        final customLabels = List<String>.from(_books[idx].customLabels);
         customLabels.remove(name);
-        _books[idx] = BookEntry(
-          filePath: bookEntry.filePath,
-          title: bookEntry.title,
-          coverPath: bookEntry.coverPath,
-          bookmarks: bookEntry.bookmarks,
-          addedAt: bookEntry.addedAt,
-          lastChapter: bookEntry.lastChapter,
-          totalChapters: bookEntry.totalChapters,
-          customLabels: customLabels,
-        );
+        _books[idx] = _books[idx].copyWith(customLabels: customLabels);
         _saveBooks();
       }
     });
@@ -416,8 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       final idx = _books.indexWhere((b) => b.filePath == book.filePath);
       if (idx != -1) {
-        final bookEntry = _books[idx];
-        final bookmarks = List<BookmarkType>.from(bookEntry.bookmarks);
+        final bookmarks = List<BookmarkType>.from(_books[idx].bookmarks);
         
         if (type == BookmarkType.all) {
           if (bookmarks.contains(BookmarkType.all)) {
@@ -436,16 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         }
         
-        _books[idx] = BookEntry(
-          filePath: bookEntry.filePath,
-          title: bookEntry.title,
-          coverPath: bookEntry.coverPath,
-          bookmarks: bookmarks,
-          addedAt: bookEntry.addedAt,
-          lastChapter: bookEntry.lastChapter,
-          totalChapters: bookEntry.totalChapters,
-          customLabels: bookEntry.customLabels,
-        );
+        _books[idx] = _books[idx].copyWith(bookmarks: bookmarks);
         _saveBooks();
       }
     });
@@ -454,13 +382,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _openBook(BookEntry book) async {
     final prefs = await SharedPreferences.getInstance();
-    final chapterIndex = prefs.getInt('chapter_${book.filePath}') ?? 0;
+    final chapterIndex = prefs.getInt('lastChapterIndex_${book.filePath}') ?? 0;
+    final isTts = prefs.getBool('lastWasTts_${book.filePath}') ?? false;
+    final chunkIndex = prefs.getInt('tts_chunk_${book.filePath}') ?? 0;
+
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => ReaderScreen(
           filePath: book.filePath,
-          startChapter: chapterIndex,
+          startChapter: book.lastChapter,
+          isTts: book.lastWasTts,
+          startChunk: book.ttsLastChunk,
         ),
       ),
     ).then((_) => _loadBooks());

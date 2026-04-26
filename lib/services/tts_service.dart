@@ -41,6 +41,7 @@ class TtsService extends ChangeNotifier {
 
   List<String> _chunks = [];
   List<int> _paragraphStartIndices = [];
+  List<int> _chunkOffsets = [];
   int _chunkIndex = 0;
   VoidCallback? onChapterFinished;
 
@@ -61,6 +62,9 @@ class TtsService extends ChangeNotifier {
   int get currentChunkIndex => _chunkIndex;
   int get totalChunks => _chunks.length;
   String? get currentChunkText => _chunks.isNotEmpty && _chunkIndex < _chunks.length ? _chunks[_chunkIndex] : null;
+  int get currentChunkOffset => _chunkOffsets.isNotEmpty && _chunkIndex < _chunkOffsets.length
+      ? _chunkOffsets[_chunkIndex]
+      : 0;
 
   TtsService() {
     _loadSettings();
@@ -435,24 +439,69 @@ class TtsService extends ChangeNotifier {
   }
 
   List<String> _splitIntoChunks(String text) {
-    final RegExp chunkSplitter = RegExp(r'[?\.!;,]+');
+    // Delimiters based on user request: ? . ! ; : "
+    // We split where these punctuation marks are followed by whitespace or end of string
+    final RegExp sentenceEnd = RegExp(r'(?<=[?\.!;:"])(?=\s|$)');
     
     final List<String> paragraphs = text.split(RegExp(r'\n+'));
     final List<String> chunks = [];
     _paragraphStartIndices = [];
+    _chunkOffsets = [];
     
-    for (var paragraph in paragraphs) {
-      paragraph = paragraph.trim();
-      if (paragraph.isEmpty) continue;
+    int currentGlobalOffset = 0;
+    
+    for (int i = 0; i < paragraphs.length; i++) {
+      String paragraph = paragraphs[i];
+      
+      if (paragraph.trim().isEmpty) {
+        currentGlobalOffset += paragraph.length + 1; // +1 for the newline
+        continue;
+      }
 
       _paragraphStartIndices.add(chunks.length);
-      final List<String> parts = paragraph.split(chunkSplitter);
+      
+      final List<String> parts = paragraph.split(sentenceEnd);
+      int paragraphOffset = 0;
       
       for (var part in parts) {
-        part = part.trim();
-        if (part.isEmpty) continue;
-        chunks.add(part);
+        // Find the actual start of this part in the paragraph (skipping leading whitespace)
+        int leadingSpace = part.length - part.trimLeft().length;
+        String trimmedPart = part.trim();
+        
+        if (trimmedPart.isEmpty) {
+          paragraphOffset += part.length;
+          continue;
+        }
+
+        // Secondary split for very long parts
+        if (trimmedPart.length > 300) {
+          int subStart = 0;
+          while (subStart < trimmedPart.length) {
+            int subEnd = subStart + 300;
+            if (subEnd > trimmedPart.length) subEnd = trimmedPart.length;
+            
+            if (subEnd < trimmedPart.length) {
+              int lastSpace = trimmedPart.lastIndexOf(' ', subEnd);
+              if (lastSpace > subStart) subEnd = lastSpace;
+            }
+            
+            String subChunk = trimmedPart.substring(subStart, subEnd).trim();
+            if (subChunk.isNotEmpty) {
+              chunks.add(subChunk);
+              _chunkOffsets.add(currentGlobalOffset + paragraphOffset + leadingSpace + subStart);
+            }
+            subStart = subEnd;
+            while (subStart < trimmedPart.length && trimmedPart[subStart] == ' ') subStart++;
+          }
+        } else {
+          chunks.add(trimmedPart);
+          _chunkOffsets.add(currentGlobalOffset + paragraphOffset + leadingSpace);
+        }
+        
+        paragraphOffset += part.length;
       }
+      
+      currentGlobalOffset += paragraph.length + 1;
     }
     
     return chunks;
