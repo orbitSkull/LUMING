@@ -129,8 +129,8 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
   Future<void> _saveProject(EpisodeProject project) async {
     if (_projectFolderPath == null) return;
     
-    final sanitizedTitle = project.title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-    final filePath = '$_projectFolderPath/$sanitizedTitle.json';
+    final jsonFileName = '${project.title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')}-${project.id}.json';
+    final filePath = '$_projectFolderPath/$jsonFileName';
     
     final file = File(filePath);
     await file.writeAsString(jsonEncode(project.toJson()));
@@ -239,6 +239,63 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
     setState(() {});
   }
 
+  Future<void> _cloneProject(EpisodeProject project) async {
+    if (!_hasPermission) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please grant storage permission first'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    
+    final controller = TextEditingController(text: '${project.title} (Copy)');
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clone Project'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'New Project Title',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (controller.text.isNotEmpty && project.epubPath != null) {
+                final newProject = await _service.cloneProject(
+                  project,
+                  controller.text,
+                  _projectFolderPath!,
+                );
+                if (newProject != null) {
+                  await _saveProject(newProject);
+                  _projects.insert(0, newProject);
+                  setState(() {});
+                  if (mounted) {
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Cloned: ${newProject.title}')),
+                    );
+                  }
+                }
+              }
+            },
+            child: const Text('Clone'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showAddOptions() {
     showModalBottomSheet(
       context: context,
@@ -256,10 +313,68 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                 _showNewProjectDialog();
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.file_upload, color: Colors.orange),
+              title: const Text('Import EPUB'),
+              subtitle: const Text('Import existing epub file'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _importEpub();
+              },
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _importEpub() async {
+    if (!_hasPermission) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please grant storage permission first'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['epub'],
+      );
+      
+      if (result != null && result.files.isNotEmpty) {
+        final path = result.files.first.path;
+        if (path != null) {
+          final project = await _service.importEpub(path, _projectFolderPath!);
+          if (project != null) {
+            await _saveProject(project);
+            _projects.insert(0, project);
+            setState(() {});
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Imported: ${project.title}')),
+              );
+            }
+          } else {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Failed to import epub')),
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error importing epub: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
   }
 
   void _showNewProjectDialog() {
@@ -294,11 +409,13 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
             onPressed: () async {
               if (controller.text.isNotEmpty) {
                 final now = DateTime.now();
+                final id = now.millisecondsSinceEpoch.toString();
                 String? epubPath;
                 
                 try {
                   epubPath = await _service.createEmptyEpub(
                     controller.text,
+                    id,
                     _projectFolderPath!,
                   );
                 } catch (e) {
@@ -311,7 +428,7 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                 }
                 
                 final project = EpisodeProject(
-                  id: now.millisecondsSinceEpoch.toString(),
+                  id: id,
                   title: controller.text,
                   epubPath: epubPath,
                   createdAt: now,
@@ -602,6 +719,10 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                                       child: Text('Cover'),
                                     ),
                                     const PopupMenuItem(
+                                      value: 'clone',
+                                      child: Text('Clone'),
+                                    ),
+                                    const PopupMenuItem(
                                       value: 'rename',
                                       child: Text('Rename'),
                                     ),
@@ -623,6 +744,8 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                                       _showRenameDialog(project);
                                     } else if (value == 'cover') {
                                       _showCoverDialog(project);
+                                    } else if (value == 'clone') {
+                                      await _cloneProject(project);
                                     }
                                   },
                                 ),
