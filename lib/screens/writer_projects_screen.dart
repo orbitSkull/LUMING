@@ -5,7 +5,12 @@ import 'package:permission_handler/permission_handler.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'writer_screen.dart';
-import 'package:flutter/services.dart';
+
+enum ProjectBookmark {
+  all,
+  recent,
+  favourite,
+}
 
 class Chapter {
   final String id;
@@ -42,6 +47,7 @@ class WriterProject {
   final List<Chapter> chapters;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final List<ProjectBookmark> bookmarks;
 
   WriterProject({
     required this.id,
@@ -50,6 +56,7 @@ class WriterProject {
     this.chapters = const [],
     required this.createdAt,
     required this.updatedAt,
+    this.bookmarks = const [ProjectBookmark.all],
   });
 
   Map<String, dynamic> toJson() => {
@@ -59,6 +66,7 @@ class WriterProject {
     'chapters': chapters.map((c) => c.toJson()).toList(),
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
+    'bookmarks': bookmarks.map((b) => b.name).toList(),
   };
 
   factory WriterProject.fromJson(Map<String, dynamic> json) => WriterProject(
@@ -68,6 +76,10 @@ class WriterProject {
     chapters: (json['chapters'] as List?)?.map((c) => Chapter.fromJson(c)).toList() ?? [],
     createdAt: DateTime.parse(json['createdAt']),
     updatedAt: DateTime.parse(json['updatedAt']),
+    bookmarks: (json['bookmarks'] as List?)?.map((b) => ProjectBookmark.values.firstWhere(
+      (e) => e.name == b,
+      orElse: () => ProjectBookmark.all,
+    )).toList() ?? [ProjectBookmark.all],
   );
 }
 
@@ -83,6 +95,8 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
   String? _projectFolderPath;
   bool _isLoading = true;
   bool _hasPermission = false;
+  bool _isGridView = false;
+  ProjectBookmark _selectedBookmark = ProjectBookmark.all;
 
   @override
   void initState() {
@@ -129,7 +143,6 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
               }
             }
           }
-          _projects.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
         }
       } catch (e) {
         debugPrint('Error loading projects: $e');
@@ -139,6 +152,13 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
     setState(() {
       _isLoading = false;
     });
+  }
+
+  List<WriterProject> get _filteredProjects {
+    if (_selectedBookmark == ProjectBookmark.all) {
+      return _projects;
+    }
+    return _projects.where((p) => p.bookmarks.contains(_selectedBookmark)).toList();
   }
 
   Future<void> _requestPermission() async {
@@ -186,6 +206,34 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
     
     final file = File(filePath);
     await file.writeAsString(jsonEncode(project.toJson()));
+  }
+
+  Future<void> _toggleBookmark(WriterProject project, ProjectBookmark bookmark) async {
+    final updatedBookmarks = List<ProjectBookmark>.from(project.bookmarks);
+    if (updatedBookmarks.contains(bookmark)) {
+      updatedBookmarks.remove(bookmark);
+    } else {
+      updatedBookmarks.add(bookmark);
+    }
+    
+    final updatedProject = WriterProject(
+      id: project.id,
+      title: project.title,
+      epubPath: project.epubPath,
+      chapters: project.chapters,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+      bookmarks: updatedBookmarks,
+    );
+    
+    await _saveProject(updatedProject);
+    
+    setState(() {
+      final index = _projects.indexWhere((p) => p.id == project.id);
+      if (index != -1) {
+        _projects[index] = updatedProject;
+      }
+    });
   }
 
   Future<void> _deleteProject(WriterProject project) async {
@@ -285,6 +333,41 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
     );
   }
 
+  void _showBookmarkSheet(WriterProject project) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Bookmarks for "${project.title}"',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              children: ProjectBookmark.values.map((bookmark) {
+                final isSelected = project.bookmarks.contains(bookmark);
+                return FilterChip(
+                  label: Text(bookmark.name.toUpperCase()),
+                  selected: isSelected,
+                  selectedColor: Colors.teal[200],
+                  onSelected: (_) {
+                    _toggleBookmark(project, bookmark);
+                    Navigator.pop(ctx);
+                  },
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _openProject(WriterProject project) {
     Navigator.push(
       context,
@@ -328,10 +411,24 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
       appBar: AppBar(
         title: const Text('Projects'),
         backgroundColor: Colors.teal,
+        leading: IconButton(
+          icon: const Icon(Icons.folder),
+          onPressed: _requestPermission,
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.folder),
-            onPressed: _requestPermission,
+            icon: Icon(_isGridView ? Icons.list : Icons.grid_view),
+            onPressed: () => setState(() => _isGridView = !_isGridView),
+          ),
+          PopupMenuButton<ProjectBookmark>(
+            icon: const Icon(Icons.filter_list),
+            onSelected: (bookmark) => setState(() => _selectedBookmark = bookmark),
+            itemBuilder: (ctx) => ProjectBookmark.values.map((bookmark) {
+              return PopupMenuItem(
+                value: bookmark,
+                child: Text(bookmark.name.toUpperCase()),
+              );
+            }).toList(),
           ),
         ],
       ),
@@ -357,7 +454,7 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                     ],
                   ),
                 )
-              : _projects.isEmpty
+              : _filteredProjects.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -374,37 +471,94 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                         ],
                       ),
                     )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(8),
-                      itemCount: _projects.length,
-                      itemBuilder: (context, index) {
-                        final project = _projects[index];
-                        return Card(
-                          child: ListTile(
-                            leading: const CircleAvatar(
-                              backgroundColor: Colors.teal,
-                              child: Icon(Icons.book, color: Colors.white),
-                            ),
-                            title: Text(project.title),
-                            subtitle: Text('${project.chapters.length} chapters'),
-                            trailing: PopupMenuButton(
-                              itemBuilder: (ctx) => [
-                                const PopupMenuItem(
-                                  value: 'delete',
-                                  child: Text('Delete', style: TextStyle(color: Colors.red)),
-                                ),
-                              ],
-                              onSelected: (value) async {
-                                if (value == 'delete') {
-                                  await _deleteProject(project);
-                                }
-                              },
-                            ),
-                            onTap: () => _openProject(project),
+                  : _isGridView
+                      ? GridView.builder(
+                          padding: const EdgeInsets.all(8),
+                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            childAspectRatio: 0.85,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
                           ),
-                        );
-                      },
-                    ),
+                          itemCount: _filteredProjects.length,
+                          itemBuilder: (context, index) {
+                            final project = _filteredProjects[index];
+                            return Card(
+                              child: InkWell(
+                                onTap: () => _openProject(project),
+                                onLongPress: () => _showBookmarkSheet(project),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Container(
+                                        width: double.infinity,
+                                        color: Colors.teal[100],
+                                        child: const Icon(Icons.book, size: 48, color: Colors.teal),
+                                      ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.all(8),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            project.title,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(fontWeight: FontWeight.bold),
+                                          ),
+                                          Text(
+                                            '${project.chapters.length} chapters',
+                                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(8),
+                          itemCount: _filteredProjects.length,
+                          itemBuilder: (context, index) {
+                            final project = _filteredProjects[index];
+                            return Card(
+                              child: ListTile(
+                                leading: const CircleAvatar(
+                                  backgroundColor: Colors.teal,
+                                  child: Icon(Icons.book, color: Colors.white),
+                                ),
+                                title: Text(project.title),
+                                subtitle: Text('${project.chapters.length} chapters'),
+                                trailing: PopupMenuButton(
+                                  itemBuilder: (ctx) => [
+                                    const PopupMenuItem(
+                                      value: 'bookmark',
+                                      child: Text('Bookmark'),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text('Delete', style: TextStyle(color: Colors.red)),
+                                    ),
+                                  ],
+                                  onSelected: (value) async {
+                                    if (value == 'delete') {
+                                      await _deleteProject(project);
+                                    } else if (value == 'bookmark') {
+                                      _showBookmarkSheet(project);
+                                    }
+                                  },
+                                ),
+                                onTap: () => _openProject(project),
+                                onLongPress: () => _showBookmarkSheet(project),
+                              ),
+                            );
+                          },
+                        ),
       floatingActionButton: _hasPermission
           ? FloatingActionButton(
               onPressed: _showAddOptions,

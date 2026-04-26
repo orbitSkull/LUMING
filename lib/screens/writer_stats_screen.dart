@@ -10,7 +10,6 @@ class WriterStatsScreen extends StatefulWidget {
 
 class _WriterStatsScreenState extends State<WriterStatsScreen> {
   final WriterService _writerService = WriterService();
-  int _dailyGoal = 500;
   
   @override
   void initState() {
@@ -20,61 +19,18 @@ class _WriterStatsScreenState extends State<WriterStatsScreen> {
 
   void _loadStats() async {
     await _writerService.loadStats();
-    setState(() {
-      _dailyGoal = _writerService.stats.dailyGoal;
-    });
-  }
-
-  void _showGoalDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        final controller = TextEditingController(text: _dailyGoal.toString());
-        return AlertDialog(
-          title: const Text('Set Daily Goal'),
-          content: TextField(
-            controller: controller,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              labelText: 'Words per day',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () async {
-                final goal = int.tryParse(controller.text) ?? 500;
-                await _writerService.setDailyGoal(goal);
-                setState(() => _dailyGoal = goal);
-                if (mounted) Navigator.pop(ctx);
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     final stats = _writerService.stats;
-    final progress = stats.sessionWords / _dailyGoal;
+    final progress = stats.sessionWords / stats.dailyGoal;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Writer Stats'),
         backgroundColor: Colors.teal,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _showGoalDialog,
-          ),
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -216,7 +172,7 @@ class _WriterStatsScreenState extends State<WriterStatsScreen> {
               children: [
                 _buildVelocityItem('${stats.velocity.toStringAsFixed(1)}', 'words/hr'),
                 _buildVelocityItem('${stats.sessionDuration}', 'minutes'),
-                _buildVelocityItem('${_dailyGoal}', 'daily goal'),
+                _buildVelocityItem('${stats.dailyGoal}', 'daily goal'),
               ],
             ),
           ],

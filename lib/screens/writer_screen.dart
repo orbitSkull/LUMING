@@ -345,7 +345,7 @@ class _WriterScreenState extends State<WriterScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (_isEditMode) _buildTtsButton(),
-                      TextButton.icon(
+TextButton.icon(
                         onPressed: canGoForward ? _nextChapter : null,
                         icon: Text('Next', style: TextStyle(color: canGoForward ? (isDark ? Colors.white : Colors.black87) : Colors.grey)),
                         label: Icon(Icons.chevron_right, color: canGoForward ? (isDark ? Colors.white : Colors.black87) : Colors.grey),
@@ -440,6 +440,7 @@ class _WriterScreenState extends State<WriterScreen> {
   }
 
   Widget _buildTtsButton() {
+    if (_isEditMode) return const SizedBox.shrink();
     return Consumer<TtsService>(
       builder: (context, tts, _) {
         return GestureDetector(
