@@ -22,10 +22,15 @@ class _WriterScreenState extends State<WriterScreen> {
   int _currentChapterIndex = 0;
   final TextEditingController _contentController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _focusNode = FocusNode();
   bool _showUI = true;
   bool _hasUnsavedChanges = false;
   bool _isEditMode = false;
   bool _isLoading = true;
+  bool _showWordCount = true;
+  bool _typewriterScrolling = false;
+  bool _focusMode = false;
+  int _wordCount = 0;
 
   @override
   void initState() {
@@ -45,10 +50,20 @@ class _WriterScreenState extends State<WriterScreen> {
     if (_chapters.isNotEmpty && _currentChapterIndex < _chapters.length) {
       _contentController.text = _chapters[_currentChapterIndex].content;
     }
+    _updateWordCount();
     setState(() {
       _isLoading = false;
       _isEditMode = _chapters.isEmpty;
     });
+  }
+
+  void _updateWordCount() {
+    final text = _contentController.text;
+    if (text.trim().isEmpty) {
+      _wordCount = 0;
+    } else {
+      _wordCount = text.trim().split(RegExp(r'\s+')).length;
+    }
   }
 
   @override
@@ -58,6 +73,7 @@ class _WriterScreenState extends State<WriterScreen> {
     }
     _contentController.dispose();
     _scrollController.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -157,7 +173,14 @@ class _WriterScreenState extends State<WriterScreen> {
                 }
               },
             ),
-            IconButton(icon: const Icon(Icons.text_fields_rounded), onPressed: () => _showSettingsSheet(context)),
+            IconButton(
+              icon: Icon(Icons.visibility),
+              onPressed: () => _showSettingsSheet(context),
+            ),
+            IconButton(
+              icon: Icon(_showWordCount ? Icons.abc : Icons.abc_outlined),
+              onPressed: () => setState(() => _showWordCount = !_showWordCount),
+            ),
             if (_chapters.isNotEmpty) IconButton(icon: const Icon(Icons.format_list_bulleted_rounded), onPressed: () => _showChapterList(context)),
           ],
         ) : null,
@@ -214,30 +237,52 @@ class _WriterScreenState extends State<WriterScreen> {
     return GestureDetector(
       onTap: () => setState(() => _showUI = !_showUI),
       behavior: HitTestBehavior.opaque,
-      child: Container(
-        color: backgroundColor,
-        height: double.infinity,
-        width: double.infinity,
-        child: SingleChildScrollView(
-          controller: _scrollController,
-          padding: EdgeInsets.fromLTRB(16, _showUI ? kToolbarHeight + 40 : 40, 16, _showUI ? 100 : 40),
-          child: TextField(
-            controller: _contentController,
-            maxLines: null,
-            style: TextStyle(fontSize: settings.fontSize, height: settings.lineHeight, color: textColor),
-            cursorColor: Colors.teal,
-            decoration: InputDecoration(
-              border: InputBorder.none,
-              hintText: 'Start writing...',
-              hintStyle: TextStyle(color: textColor.withOpacity(0.4)),
+      child: Stack(
+        children: [
+          Container(
+            color: backgroundColor,
+            height: double.infinity,
+            width: double.infinity,
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              padding: EdgeInsets.fromLTRB(16, _showUI ? kToolbarHeight + 40 : 40, 16, _showUI ? 100 : 40),
+              child: TextField(
+                controller: _contentController,
+                maxLines: null,
+                style: TextStyle(fontSize: settings.fontSize, height: settings.lineHeight, color: textColor),
+                cursorColor: Colors.teal,
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  hintText: 'Start writing...',
+                  hintStyle: TextStyle(color: textColor.withOpacity(0.4)),
+                ),
+                focusNode: _focusNode,
+                onChanged: (val) {
+                  if (!_hasUnsavedChanges) {
+                    setState(() => _hasUnsavedChanges = true);
+                  }
+                  _updateWordCount();
+                },
+              ),
             ),
-            onChanged: (val) {
-              if (!_hasUnsavedChanges) {
-                setState(() => _hasUnsavedChanges = true);
-              }
-            },
           ),
-        ),
+          if (_showWordCount && _isEditMode)
+            Positioned(
+              top: _showUI ? kToolbarHeight + 50 : 16,
+              right: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  '$_wordCount words',
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -366,8 +411,10 @@ class _WriterScreenState extends State<WriterScreen> {
   }
 
   void _showSettingsSheet(BuildContext context) {
+    final tts = Provider.of<TtsService>(context, listen: false);
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       builder: (context) => Consumer<ReaderSettings>(
         builder: (context, settings, _) => Container(
           padding: const EdgeInsets.all(24),
@@ -382,11 +429,42 @@ class _WriterScreenState extends State<WriterScreen> {
                   IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
                 ],
               ),
-              const SizedBox(height: 24),
-              Row(children: [const Text('Font Size:'), const Spacer(), IconButton(icon: const Icon(Icons.remove), onPressed: settings.decreaseFontSize), Text('${settings.fontSize.toInt()}'), IconButton(icon: const Icon(Icons.add), onPressed: settings.increaseFontSize)]),
               const SizedBox(height: 16),
-              Row(children: [const Text('Line Height:'), const Spacer(), SizedBox(width: 200, child: Slider(value: settings.lineHeight, min: 1.2, max: 2.0, divisions: 8, label: settings.lineHeight.toStringAsFixed(1), onChanged: settings.setLineHeight))]),
-              const SizedBox(height: 16),
+              SwitchListTile(
+                title: const Text('Typewriter Scrolling'),
+                subtitle: const Text('Keep current line centered'),
+                value: _typewriterScrolling,
+                onChanged: (val) => setState(() => _typewriterScrolling = val),
+                contentPadding: EdgeInsets.zero,
+              ),
+              SwitchListTile(
+                title: const Text('Show Word Count'),
+                value: _showWordCount,
+                onChanged: (val) => setState(() => _showWordCount = val),
+                contentPadding: EdgeInsets.zero,
+              ),
+              SwitchListTile(
+                title: const Text('Focus Mode'),
+                subtitle: const Text('Hide status bar and UI'),
+                value: _focusMode,
+                onChanged: (val) => setState(() { _focusMode = val; _showUI = !val; }),
+                contentPadding: EdgeInsets.zero,
+              ),
+              const Divider(height: 32),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Font Size', style: Theme.of(context).textTheme.titleMedium),
+                  Row(children: [IconButton(icon: const Icon(Icons.remove), onPressed: settings.decreaseFontSize), Text('${settings.fontSize.toInt()}'), IconButton(icon: const Icon(Icons.add), onPressed: settings.increaseFontSize)]),
+                ],
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Line Height'),
+                  SizedBox(width: 200, child: Slider(value: settings.lineHeight, min: 1.2, max: 2.0, divisions: 8, label: settings.lineHeight.toStringAsFixed(1), onChanged: settings.setLineHeight)),
+                ],
+              ),
               SwitchListTile(title: const Text('Dark Mode'), value: settings.darkMode, onChanged: (_) => settings.toggleDarkMode(), contentPadding: EdgeInsets.zero),
               const SizedBox(height: 16),
               const Text('Font Family:'), const SizedBox(height: 8),
@@ -395,6 +473,43 @@ class _WriterScreenState extends State<WriterScreen> {
                 ChoiceChip(label: const Text('Sans'), selected: settings.fontFamily == 'Sans', onSelected: (_) => settings.setFontFamily('Sans')),
                 ChoiceChip(label: const Text('Mono'), selected: settings.fontFamily == 'Mono', onSelected: (_) => settings.setFontFamily('Mono')),
               ]),
+              const Divider(height: 32),
+              Text('TTS Settings', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Speech Rate'),
+                  SizedBox(width: 200, child: Slider(value: tts.speechRate, min: 0.1, max: 4.0, divisions: 39, label: '${tts.speechRate.toStringAsFixed(2)}x', onChanged: tts.setSpeechRate)),
+                ],
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Voice Pitch'),
+                  SizedBox(width: 200, child: Slider(value: tts.pitch, min: 0.5, max: 2.0, divisions: 15, label: tts.pitch.toStringAsFixed(1), onChanged: tts.setPitch)),
+                ],
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Pause at Period (ms)'),
+                  SizedBox(width: 200, child: Slider(value: tts.sentencePause.toDouble(), min: 0, max: 2000, divisions: 20, label: '${tts.sentencePause}ms', onChanged: (val) => tts.setSentencePause(val.toInt()))),
+                ],
+              ),
+              SwitchListTile(
+                title: const Text('Highlight Spoken Word'),
+                value: tts.highlightSpokenWord,
+                onChanged: (val) => tts.setHighlightSpokenWord(val),
+                contentPadding: EdgeInsets.zero,
+              ),
+              SwitchListTile(
+                title: const Text('Continuous Play'),
+                value: tts.continuousPlay,
+                onChanged: (val) => tts.setContinuousPlay(val),
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 16),
             ],
           ),
         ),

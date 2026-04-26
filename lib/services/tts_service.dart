@@ -25,6 +25,9 @@ class TtsService extends ChangeNotifier {
   String? _currentText;
   double _speechRate = 1.0;
   double _pitch = 1.0;
+  int _sentencePause = 500;
+  bool _highlightSpokenWord = false;
+  bool _continuousPlay = false;
   int _sampleRate = 22050; // Default Piper sample rate
   
   // Legacy support for PiperVoicePack
@@ -44,6 +47,9 @@ class TtsService extends ChangeNotifier {
   TtsState get state => _state;
   double get speechRate => _speechRate;
   double get pitch => _pitch;
+  int get sentencePause => _sentencePause;
+  bool get highlightSpokenWord => _highlightSpokenWord;
+  bool get continuousPlay => _continuousPlay;
   PiperVoicePack get selectedVoice => _selectedVoicePack;
   PiperVoice? get selectedCustomVoice => _selectedCustomVoice;
   List<PiperVoice> get availableVoices => _availableVoices;
@@ -194,10 +200,24 @@ class TtsService extends ChangeNotifier {
 
   void setPitch(double pitch) {
     _pitch = pitch.clamp(0.1, 4.0);
-    // If we're playing, update the player pitch immediately
     if (_state == TtsState.playing || _state == TtsState.paused) {
       _player.setPitch(_pitch);
     }
+    notifyListeners();
+  }
+
+  void setSentencePause(int ms) {
+    _sentencePause = ms.clamp(0, 2000);
+    notifyListeners();
+  }
+
+  void setHighlightSpokenWord(bool value) {
+    _highlightSpokenWord = value;
+    notifyListeners();
+  }
+
+  void setContinuousPlay(bool value) {
+    _continuousPlay = value;
     notifyListeners();
   }
 
