@@ -415,7 +415,7 @@ class TtsService extends ChangeNotifier {
   }
 
   List<String> _splitIntoChunks(String text) {
-    final RegExp sentenceSplitter = RegExp(r'(?<!\b(?:Mr|Mrs|Ms|Dr|Jr|Sr|vs|Prof|St|i\.e|e\.g)\.)(?<=[.!?])\s+');
+    final RegExp chunkSplitter = RegExp(r'[?\.!;,]+');
     
     final List<String> paragraphs = text.split(RegExp(r'\n+'));
     final List<String> chunks = [];
@@ -426,27 +426,12 @@ class TtsService extends ChangeNotifier {
       if (paragraph.isEmpty) continue;
 
       _paragraphStartIndices.add(chunks.length);
-      final List<String> sentences = paragraph.split(sentenceSplitter);
+      final List<String> parts = paragraph.split(chunkSplitter);
       
-      for (var sentence in sentences) {
-        sentence = sentence.trim();
-        if (sentence.isEmpty) continue;
-
-        if (sentence.length > 400) {
-          List<String> words = sentence.split(' ');
-          String temp = "";
-          for (var word in words) {
-            if (temp.length + word.length > 350) {
-              chunks.add(temp.trim());
-              temp = word;
-            } else {
-              temp = temp.isEmpty ? word : "$temp $word";
-            }
-          }
-          if (temp.isNotEmpty) chunks.add(temp.trim());
-        } else {
-          chunks.add(sentence);
-        }
+      for (var part in parts) {
+        part = part.trim();
+        if (part.isEmpty) continue;
+        chunks.add(part);
       }
     }
     
