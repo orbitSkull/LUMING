@@ -1,5 +1,10 @@
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import '../services/writer_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
+import '../services/epub_project_service.dart';
+import 'writer_epub_stats_screen.dart';
 
 class WriterStatsScreen extends StatefulWidget {
   const WriterStatsScreen({super.key});
@@ -9,219 +14,254 @@ class WriterStatsScreen extends StatefulWidget {
 }
 
 class _WriterStatsScreenState extends State<WriterStatsScreen> {
-  final WriterService _writerService = WriterService();
-  
+  List<EpisodeProject> _projects = [];
+  bool _isLoading = true;
+  bool _hasPermission = false;
+  String? _projectFolderPath;
+  ProjectBookmark _selectedFilter = ProjectBookmark.all;
+  bool _isGridView = false;
+  final EpubProjectService _service = EpubProjectService();
+
   @override
   void initState() {
     super.initState();
-    _loadStats();
+    _checkPermission();
   }
 
-  void _loadStats() async {
-    await _writerService.loadStats();
-    setState(() {});
+  Future<void> _checkPermission() async {
+    final status = await Permission.manageExternalStorage.status;
+    _hasPermission = status.isGranted;
+    if (_hasPermission) {
+      final prefs = await SharedPreferences.getInstance();
+      _projectFolderPath = prefs.getString('writerProjectFolder');
+      await _loadProjects();
+    }
+    setState(() => _isLoading = false);
+  }
+
+  List<EpisodeProject> get _filteredProjects {
+    if (_selectedFilter == ProjectBookmark.all) {
+      return _projects;
+    }
+    return _projects.where((p) => p.bookmarks.contains(_selectedFilter)).toList();
+  }
+
+  Future<void> _loadProjects() async {
+    if (_projectFolderPath == null) {
+      final folder = Directory('/storage/emulated/0/LUMING');
+      if (!await folder.exists()) {
+        await folder.create(recursive: true);
+      }
+      _projectFolderPath = folder.path;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('writerProjectFolder', folder.path);
+    }
+
+    try {
+      final folder = Directory(_projectFolderPath!);
+      if (await folder.exists()) {
+        final entities = folder.listSync();
+        for (var entity in entities) {
+          if (entity is File && entity.path.endsWith('.json')) {
+            try {
+              final content = await entity.readAsString();
+              final json = jsonDecode(content);
+              final project = EpisodeProject.fromJson(json);
+              
+              if (project.epubPath != null && 
+                  await File(project.epubPath!).existsSync()) {
+                _projects.add(project);
+              }
+            } catch (e) {
+              debugPrint('Error loading project ${entity.path}: $e');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading projects: $e');
+    }
+
+    setState(() => _isLoading = false);
+  }
+
+  void _showFilterOptions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Filter Projects', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: Icon(_selectedFilter == ProjectBookmark.all ? Icons.check : null, color: Colors.teal),
+              title: const Text('All Projects'),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() => _selectedFilter = ProjectBookmark.all);
+              },
+            ),
+            ListTile(
+              leading: Icon(_selectedFilter == ProjectBookmark.recent ? Icons.check : null, color: Colors.teal),
+              title: const Text('Recent'),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() => _selectedFilter = ProjectBookmark.recent);
+              },
+            ),
+            ListTile(
+              leading: Icon(_selectedFilter == ProjectBookmark.favourite ? Icons.check : null, color: Colors.teal),
+              title: const Text('Favourites'),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() => _selectedFilter = ProjectBookmark.favourite);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openProject(EpisodeProject project) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => WriterEpubStatsScreen(project: project),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final stats = _writerService.stats;
-    final progress = stats.sessionWords / stats.dailyGoal;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Writer Stats'),
         backgroundColor: Colors.teal,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildStatCard(
-              'Session Progress',
-              '${stats.sessionWords} words',
-              LinearProgressIndicator(
-                value: progress.clamp(0.0, 1.0),
-                backgroundColor: Colors.grey[300],
-                valueColor: AlwaysStoppedAnimation(
-                  progress >= 1 ? Colors.green : Colors.teal,
-                ),
-              ),
-              '${(progress * 100).toInt()}% of daily goal',
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(child: _buildStatTile('Today', '${stats.sessionWords}', 'words', Icons.today)),
-                const SizedBox(width: 12),
-                Expanded(child: _buildStatTile('Total', '${stats.totalWords}', 'words', Icons.library_books)),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _buildStreakCard(stats),
-            const SizedBox(height: 16),
-            _buildVelocityCard(stats),
-            const SizedBox(height: 16),
-            if (stats.sessionStartTime != null)
-              _buildSessionTimer()
-            else
-              OutlinedButton.icon(
-                onPressed: () => _writerService.startSession(),
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Start Writing Session'),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 48),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatCard(String title, String value, Widget progress, String subtitle) {
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w500)),
-            const SizedBox(height: 8),
-            progress,
-            const SizedBox(height: 4),
-            Text(subtitle, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatTile(String title, String value, String unit, IconData icon) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Icon(icon, color: Colors.teal, size: 28),
-            const SizedBox(height: 8),
-            Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            Text(unit, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-            const SizedBox(height: 4),
-            Text(title, style: const TextStyle(color: Colors.teal, fontSize: 14)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStreakCard(dynamic stats) {
-    return Card(
-      color: stats.currentStreak > 0 ? Colors.orange[50] : null,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Icon(
-              stats.currentStreak > 0 ? Icons.local_fire_department : Icons.fireplace_outlined,
-              color: stats.currentStreak > 0 ? Colors.orange : Colors.grey,
-              size: 40,
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${stats.currentStreak} Day Streak!',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    'Best: ${stats.longestStreak} days',
-                    style: const TextStyle(color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-            if (stats.goalReachedToday)
-              const Chip(
-                label: Text('Goal Met!'),
-                backgroundColor: Colors.green,
-                labelStyle: TextStyle(color: Colors.white),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildVelocityCard(dynamic stats) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Writing Velocity', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildVelocityItem('${stats.velocity.toStringAsFixed(1)}', 'words/hr'),
-                _buildVelocityItem('${stats.sessionDuration}', 'minutes'),
-                _buildVelocityItem('${stats.dailyGoal}', 'daily goal'),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildVelocityItem(String value, String label) {
-    return Column(
-      children: [
-        Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.teal)),
-        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-      ],
-    );
-  }
-
-  Widget _buildSessionTimer() {
-    return StreamBuilder(
-      stream: Stream.periodic(const Duration(seconds: 1)),
-      builder: (context, snapshot) {
-        final stats = _writerService.stats;
-        final minutes = stats.sessionDuration;
-        return Card(
-          color: Colors.teal[50],
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.timer, color: Colors.teal),
-                const SizedBox(width: 8),
-                Text(
-                  'Session: ${minutes}m',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.teal),
-                ),
-                const SizedBox(width: 16),
-                ElevatedButton(
-                  onPressed: () async {
-                    await _writerService.endSession();
-                    setState(() {});
-                  },
-                  child: const Text('End Session'),
-                ),
-              ],
-            ),
+        actions: [
+          IconButton(
+            icon: Icon(_isGridView ? Icons.list : Icons.grid_view),
+            onPressed: () => setState(() => _isGridView = !_isGridView),
           ),
-        );
-      },
+          IconButton(
+            icon: const Icon(Icons.filter_list),
+            onPressed: _showFilterOptions,
+          ),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : !_hasPermission
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.folder_open, size: 64, color: Colors.teal),
+                      const SizedBox(height: 16),
+                      const Text('Storage Permission Required', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 24),
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          final status = await Permission.manageExternalStorage.request();
+                          if (status.isGranted) {
+                            setState(() => _hasPermission = true);
+                            _loadProjects();
+                          }
+                        },
+                        icon: const Icon(Icons.security),
+                        label: const Text('Grant Permission'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+                      ),
+                    ],
+                  ),
+                )
+              : _filteredProjects.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.library_books_outlined, size: 64, color: Colors.grey),
+                          const SizedBox(height: 16),
+                          const Text('No Projects Yet', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 8),
+                          const Text('Create a project in Writer to see stats', style: TextStyle(color: Colors.grey)),
+                        ],
+                      ),
+                    )
+                  : _isGridView
+                      ? GridView.builder(
+                          padding: const EdgeInsets.all(16),
+                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            childAspectRatio: 0.85,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                          ),
+                          itemCount: _filteredProjects.length,
+                          itemBuilder: (context, index) {
+                            final project = _filteredProjects[index];
+                            return _buildGridItem(project);
+                          },
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _filteredProjects.length,
+                          separatorBuilder: (ctx, i) => const SizedBox(height: 8),
+                          itemBuilder: (context, index) {
+                            final project = _filteredProjects[index];
+                            return _buildListItem(project);
+                          },
+                        ),
+    );
+  }
+
+  Widget _buildListItem(EpisodeProject project) {
+    return Card(
+      child: ListTile(
+        leading: const CircleAvatar(
+          backgroundColor: Colors.teal,
+          child: Icon(Icons.book, color: Colors.white),
+        ),
+        title: Text(project.title),
+        subtitle: Text(
+          project.epubPath?.split('/').last ?? 'No EPUB',
+          style: const TextStyle(fontSize: 12),
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => _openProject(project),
+      ),
+    );
+  }
+
+  Widget _buildGridItem(EpisodeProject project) {
+    return Card(
+      child: InkWell(
+        onTap: () => _openProject(project),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.book, size: 48, color: Colors.teal),
+              const SizedBox(height: 12),
+              Text(
+                project.title,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Tap for stats',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
