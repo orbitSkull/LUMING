@@ -7,6 +7,7 @@ LUMING is a modern, high-performance Flutter application designed for an immersi
 ## ✅ Task List
 
 - [x] **LUMING Pub Reader**: High-fidelity EPUB parsing and immersive reading.
+- [x] **Stats For Readers**: Reading vs Listening stats, summary of activities and time
 - [x] **Advanced Piper TTS**: Neural offline text-to-speech with support for **120+ high-quality models**.
 - [x] **Background Playback**: Full notification and lock-screen controls for hands-free reading.
 - [ ] **LUMING Translation**: Real-time sentence and chapter translation (Coming Soon).
