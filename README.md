@@ -12,7 +12,7 @@ LUMING is a modern, high-performance Flutter application designed for an immersi
 - [x] **Advanced Piper TTS**: Neural offline text-to-speech with support for **120+ high-quality models**.
 - [x] **Background Playback**: Full notification and lock-screen controls for hands-free reading.
 - [x] **Custom Bookmarks**: Create unlimited custom labels for organizing books.
-- [-] **!!!LUMING Translation!!!**: Real-time sentence and chapter translation (DROPPED).
+- [~~x~~] **!!!LUMING Translation!!!**: Real-time sentence and chapter translation (DROPPED).
 - [x] **LUMING Writer**: Distraction-free EPUB creation and publishing tools.
 - [x] **IDEABOX**: Categorized scratchpad for quick-capture fragments, Quick search through all ideas, Tag system for organization.
 - [x] **LUMING Stats**: Total Word Count, Words Written Today, Project Completion %, Estimated Listening Time, Writing Streak
