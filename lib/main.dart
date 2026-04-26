@@ -10,8 +10,12 @@ import 'screens/reader_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/stats_screen.dart';
 import 'screens/splash_screen.dart';
+import 'screens/writer_stats_screen.dart';
+import 'screens/writer_portal_screen.dart';
+import 'screens/writer_settings_screen.dart';
 import 'providers/reader_settings.dart';
 import 'services/tts_service.dart';
+import 'services/writer_service.dart';
 
 enum BookmarkType {
   all,
@@ -981,7 +985,9 @@ class _HomeScreenState extends State<HomeScreen> {
         case 2:
           return _buildWriterStats();
         case 3:
-          return _buildLibrary();
+          return ReaderPortalScreen(onGoToLibrary: () {
+            setState(() => _isWriterMode = false);
+          });
         case 4:
           return _buildWriterSettings();
         default:
@@ -1021,19 +1027,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildWriterStats() {
-    return const Scaffold(
-      body: Center(
-        child: Text('Writer Stats - Coming Soon', style: TextStyle(color: Colors.teal)),
-      ),
-    );
+    return const WriterStatsScreen();
   }
 
   Widget _buildWriterSettings() {
-    return const Scaffold(
-      body: Center(
-        child: Text('Writer Settings - Coming Soon', style: TextStyle(color: Colors.teal)),
-      ),
-    );
+    return const WriterSettingsScreen();
   }
 
   void _onNavTap(int index) {
