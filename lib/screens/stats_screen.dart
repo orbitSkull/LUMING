@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/foundation.dart';
-import 'dart:convert';
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
@@ -19,7 +17,6 @@ class _StatsScreenState extends State<StatsScreen> with SingleTickerProviderStat
   int _totalListeningMinutes = 0;
   int _currentStreak = 0;
   double _avgTtsSpeed = 1.0;
-  int _wordsRead = 0;
   int _listeningSessions = 0;
 
   @override
@@ -44,7 +41,6 @@ class _StatsScreenState extends State<StatsScreen> with SingleTickerProviderStat
       _totalListeningMinutes = prefs.getInt('totalListeningMinutes') ?? 0;
       _currentStreak = prefs.getInt('currentStreak') ?? 0;
       _avgTtsSpeed = prefs.getDouble('avgTtsSpeed') ?? 1.0;
-      _wordsRead = prefs.getInt('wordsRead') ?? 0;
       _listeningSessions = prefs.getInt('listeningSessions') ?? 0;
     });
   }

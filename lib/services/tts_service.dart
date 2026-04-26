@@ -26,7 +26,6 @@ class TtsService extends ChangeNotifier {
   double _speechRate = 1.0;
   double _pitch = 1.0;
   int _sampleRate = 22050; // Default Piper sample rate
-  int _speakerId = 0; // Default speaker ID for multi-speaker models
   
   // Legacy support for PiperVoicePack
   PiperVoicePack _selectedVoicePack = PiperVoicePack.norman;
@@ -35,7 +34,6 @@ class TtsService extends ChangeNotifier {
   List<PiperVoice> _availableVoices = [];
 
   String? _errorMessage;
-  String? _audioPath;
   final List<String> _tempFiles = [];
 
   List<String> _chunks = [];
@@ -90,7 +88,6 @@ class TtsService extends ChangeNotifier {
       debugPrint('TTS: Finished all ${_chunks.length} chunks. Triggering next chapter.');
       _state = TtsState.ready;
       _chunks = [];
-      int finalIndex = _chunkIndex;
       _chunkIndex = 0;
       notifyListeners();
 
@@ -243,17 +240,12 @@ class TtsService extends ChangeNotifier {
             
             // Check for multi-speaker model
             if (configJson['num_speakers'] != null && (configJson['num_speakers'] as int) > 1) {
-              // Default to first speaker if not specified, or could be expanded later
-              _speakerId = 0; 
               debugPrint('TTS: Multi-speaker model detected. Total speakers: ${configJson['num_speakers']}. Using speaker 0.');
-            } else {
-              _speakerId = 0;
             }
             
             debugPrint('TTS: Detected sample rate: $_sampleRate');
           } catch (e) {
             _sampleRate = 22050;
-            _speakerId = 0;
             debugPrint('TTS: Could not parse config for details, using defaults');
           }
 
@@ -429,6 +421,25 @@ class TtsService extends ChangeNotifier {
         outputPath: outputPath,
       );
 
+      // Track words read and listening minutes
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        int wordsCount = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
+        int wr = prefs.getInt('wordsRead') ?? 0;
+        await prefs.setInt('wordsRead', wr + wordsCount);
+        
+        // Approx 130 words per minute. Let's just track word count and we can calculate minutes in Stats.
+        // Actually the StatsScreen reads 'totalListeningMinutes' directly. We add the exact fraction of a minute.
+        // Since we can't store floats in Int, we can store 'totalListeningSeconds' and derive minutes.
+        // But for simplicity, let's bump listening minutes by 1 every 130 words.
+        int totalWords = wr + wordsCount;
+        await prefs.setInt('totalListeningMinutes', totalWords ~/ 130);
+        
+        // Also update avgTtsSpeed
+        double currentAvg = prefs.getDouble('avgTtsSpeed') ?? 1.0;
+        await prefs.setDouble('avgTtsSpeed', (currentAvg + _speechRate) / 2.0);
+      } catch (_) {}
+
       // Check again if we were stopped or if a new 'speak' call happened during synthesis
       if (_chunks.isEmpty || _chunkIndex != index) {
         debugPrint('TTS: Synthesis finished but chunk was cancelled or changed. Cleaning up.');
@@ -450,7 +461,7 @@ class TtsService extends ChangeNotifier {
         throw Exception('Synthesized file does not exist at $outputPath');
       }
 
-      _audioPath = outputPath;
+
       _tempFiles.add(outputPath);
       
       // Keep only the last 3 temp files to save space
@@ -542,6 +553,34 @@ class TtsService extends ChangeNotifier {
         await Future.delayed(const Duration(milliseconds: 200));
         retryCount++;
       }
+      
+      // Log a listening session
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        int ls = prefs.getInt('listeningSessions') ?? 0;
+        await prefs.setInt('listeningSessions', ls + 1);
+        
+        // Update daily streak based on today's date
+        final today = DateTime.now().toIso8601String().substring(0, 10);
+        final lastActive = prefs.getString('lastActiveDate') ?? '';
+        if (lastActive != today) {
+          int streak = prefs.getInt('currentStreak') ?? 0;
+          
+          DateTime todayDate = DateTime.now();
+          DateTime? lastDate;
+          if (lastActive.isNotEmpty) {
+            lastDate = DateTime.parse(lastActive);
+          }
+          
+          if (lastDate != null && todayDate.difference(lastDate).inDays == 1) {
+            streak += 1;
+          } else if (lastDate == null || todayDate.difference(lastDate).inDays > 1) {
+            streak = 1;
+          }
+          await prefs.setInt('currentStreak', streak);
+          await prefs.setString('lastActiveDate', today);
+        }
+      } catch (_) {}
       
       debugPrint('TTS: Engine state before chunking: $_state (Loaded: $_isEngineLoaded)');
 

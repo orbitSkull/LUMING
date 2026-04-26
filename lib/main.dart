@@ -29,6 +29,7 @@ class BookEntry {
   final List<BookmarkType> bookmarks;
   final DateTime addedAt;
   final int lastChapter;
+  final int totalChapters;
 
   BookEntry({
     required this.filePath,
@@ -37,6 +38,7 @@ class BookEntry {
     required this.bookmarks,
     required this.addedAt,
     this.lastChapter = 0,
+    this.totalChapters = 1,
   });
 
   Map<String, dynamic> toJson() => {
@@ -46,6 +48,7 @@ class BookEntry {
         'bookmarks': bookmarks.map((b) => b.name).toList(),
         'addedAt': addedAt.toIso8601String(),
         'lastChapter': lastChapter,
+        'totalChapters': totalChapters,
       };
 
   factory BookEntry.fromJson(Map<String, dynamic> json) => BookEntry(
@@ -57,6 +60,7 @@ class BookEntry {
             .toList(),
         addedAt: DateTime.parse(json['addedAt']),
         lastChapter: json['lastChapter'] ?? 0,
+        totalChapters: json['totalChapters'] ?? 1,
       );
 
   String get fileName => filePath.split('/').last;
@@ -97,15 +101,18 @@ class LumingApp extends StatelessWidget {
             debugShowCheckedModeBanner: false,
             themeMode: settings.darkMode ? ThemeMode.dark : ThemeMode.light,
             theme: ThemeData(
-              colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+              colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6C63FF)),
               useMaterial3: true,
+              fontFamily: 'Inter',
             ),
             darkTheme: ThemeData(
               colorScheme: ColorScheme.fromSeed(
-                seedColor: Colors.deepPurple,
+                seedColor: const Color(0xFF6C63FF),
                 brightness: Brightness.dark,
+                surface: const Color(0xFF121212),
               ),
               useMaterial3: true,
+              fontFamily: 'Inter',
             ),
             initialRoute: '/',
             routes: {
@@ -164,6 +171,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadBooks() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     final data = prefs.getString('library');
     if (data != null) {
       final list = jsonDecode(data) as List;
@@ -293,8 +301,14 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) => _BookOptionsSheet(
         book: book,
         onBookmarkToggle: (type) => _toggleBookmark(book, type),
-        onOpen: () => _openBook(book),
-        onDelete: () => _deleteBook(book),
+        onOpen: () {
+          Navigator.pop(context);
+          _openBook(book);
+        },
+        onDelete: () {
+          Navigator.pop(context);
+          _deleteBook(book);
+        },
       ),
     );
   }
@@ -340,7 +354,6 @@ class _HomeScreenState extends State<HomeScreen> {
   void _openBook(BookEntry book) async {
     final prefs = await SharedPreferences.getInstance();
     final chapterIndex = prefs.getInt('chapter_${book.filePath}') ?? 0;
-    Navigator.pop(context);
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -353,11 +366,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _deleteBook(BookEntry book) {
+    if (book.coverPath != null && book.coverPath!.isNotEmpty) {
+      final coverFile = File(book.coverPath!);
+      if (coverFile.existsSync()) {
+        try {
+          coverFile.deleteSync();
+        } catch (_) {}
+      }
+    }
     setState(() {
       _books.removeWhere((b) => b.filePath == book.filePath);
       _saveBooks();
     });
-    Navigator.pop(context);
   }
 
   void _showFilterSheet() {
@@ -516,56 +536,126 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildListView() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       itemCount: _filteredBooks.length,
       itemBuilder: (context, index) {
         final book = _filteredBooks[index];
-        return ListTile(
-          leading: _buildBookCover(book, width: 40, height: 56),
-          title: Text(
-            book.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Wrap(
-            spacing: 4,
-            runSpacing: 4,
-            children: book.bookmarks.map((b) {
-              return Chip(
-                label: Text(
-                  _getBookmarkLabel(b),
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: _getBookmarkColor(b),
+        final progress = book.totalChapters > 1 
+            ? (book.lastChapter / book.totalChapters * 100).clamp(0, 100).toInt() 
+            : 0;
+
+        return Card(
+          elevation: 2,
+          shadowColor: Colors.black.withOpacity(0.15),
+          margin: const EdgeInsets.only(bottom: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _openBook(book),
+            onLongPress: () => _showBookOptions(book),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildBookCover(book, width: 56, height: 80, borderRadius: 8),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          book.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 4,
+                          runSpacing: 4,
+                          children: book.bookmarks.map((b) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: _getBookmarkColor(b).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: _getBookmarkColor(b).withOpacity(0.3)),
+                              ),
+                              child: Text(
+                                _getBookmarkLabel(b),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: _getBookmarkColor(b),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: LinearProgressIndicator(
+                                value: book.totalChapters > 1 ? book.lastChapter / book.totalChapters : 0,
+                                backgroundColor: isDark ? Colors.white24 : Colors.black12,
+                                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF6C63FF)),
+                                minHeight: 4,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '$progress%',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: isDark ? Colors.white70 : Colors.black54,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                backgroundColor: _getBookmarkColor(b).withOpacity(0.1),
-                padding: EdgeInsets.zero,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-              );
-            }).toList(),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.more_vert),
+                    onPressed: () => _showBookOptions(book),
+                    color: isDark ? Colors.white54 : Colors.black54,
+                  ),
+                ],
+              ),
+            ),
           ),
-          trailing: const Icon(Icons.more_vert),
-          onTap: () => _openBook(book),
-          onLongPress: () => _showBookOptions(book),
         );
       },
     );
   }
 
   Widget _buildGridView() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return GridView.builder(
       padding: const EdgeInsets.all(16),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3,
-        childAspectRatio: 0.6,
+        childAspectRatio: 0.55,
         crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
+        mainAxisSpacing: 24,
       ),
       itemCount: _filteredBooks.length,
       itemBuilder: (context, index) {
         final book = _filteredBooks[index];
+        final progress = book.totalChapters > 1 
+            ? (book.lastChapter / book.totalChapters * 100).clamp(0, 100).toInt() 
+            : 0;
+
         return GestureDetector(
           onTap: () => _openBook(book),
           onLongPress: () => _showBookOptions(book),
@@ -573,14 +663,73 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: _buildBookCover(book, width: double.infinity, height: double.infinity),
+                child: Stack(
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.15),
+                            blurRadius: 10,
+                            offset: const Offset(0, 5),
+                          )
+                        ],
+                      ),
+                      child: _buildBookCover(book, width: double.infinity, height: double.infinity, borderRadius: 12),
+                    ),
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        height: 40,
+                        decoration: BoxDecoration(
+                          borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
+                          ),
+                        ),
+                        child: Align(
+                          alignment: Alignment.bottomLeft,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 8, bottom: 6, right: 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: LinearProgressIndicator(
+                                    value: book.totalChapters > 1 ? book.lastChapter / book.totalChapters : 0,
+                                    backgroundColor: Colors.white.withOpacity(0.3),
+                                    valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF6C63FF)),
+                                    minHeight: 3,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '$progress%',
+                                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Text(
                 book.title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                style: TextStyle(
+                  fontSize: 13, 
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
               ),
             ],
           ),
@@ -589,19 +738,19 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildBookCover(BookEntry book, {required double width, required double height}) {
+  Widget _buildBookCover(BookEntry book, {required double width, required double height, double borderRadius = 4}) {
     Widget fallback = Container(
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primaryContainer,
-        borderRadius: BorderRadius.circular(4),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(borderRadius),
       ),
       child: Center(
         child: Text(
           book.title.isNotEmpty ? book.title[0].toUpperCase() : '?',
           style: TextStyle(
-            color: Theme.of(context).colorScheme.onPrimaryContainer,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
             fontWeight: FontWeight.bold,
             fontSize: width > 50 ? 24 : 16,
           ),
@@ -611,7 +760,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (book.coverPath != null && File(book.coverPath!).existsSync()) {
       return ClipRRect(
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(borderRadius),
         child: Image.file(
           File(book.coverPath!),
           width: width,
@@ -621,7 +770,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
-
     return fallback;
   }
 

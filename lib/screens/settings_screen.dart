@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:piper_tts_plugin/enums/piper_voice_pack.dart';
-import 'package:piper_tts_plugin/piper_tts_plugin.dart';
 import '../providers/reader_settings.dart';
 import '../services/tts_service.dart';
 import '../models/piper_voice.dart';
@@ -36,7 +35,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final voiceIndex = prefs.getInt('selectedVoice') ?? PiperVoicePack.norman.index;
-    final customVoiceKey = prefs.getString('selectedCustomVoiceKey');
+    final _ = prefs.getString('selectedCustomVoiceKey');
     
     setState(() {
       _defaultSpeechRate = prefs.getDouble('defaultSpeechRate') ?? 1.0;

@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:ui';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:epub_pro/epub_pro.dart';
 import 'package:flutter_html/flutter_html.dart';
@@ -10,7 +12,6 @@ import 'package:path_provider/path_provider.dart';
 import '../services/tts_service.dart';
 import '../models/piper_voice.dart';
 import 'package:just_audio/just_audio.dart' show ProcessingState;
-
 class ReaderScreen extends StatefulWidget {
   final String filePath;
   final int startChapter;
@@ -30,7 +31,6 @@ class _ReaderScreenState extends State<ReaderScreen> {
   List<EpubChapter> _chapters = [];
   int _currentChapterIndex = 0;
   bool _isLoading = true;
-  bool _isSpeaking = false;
   String? _error;
   final ScrollController _scrollController = ScrollController();
   
@@ -121,6 +121,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         final index = books.indexWhere((b) => b['filePath'] == widget.filePath);
         if (index != -1) {
           books[index]['lastChapter'] = _currentChapterIndex;
+          books[index]['totalChapters'] = _chapters.length;
           await prefs.setString('library', jsonEncode(books));
         }
       }
@@ -144,42 +145,50 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
       final book = await EpubReader.readBook(bytes);
 
-      // 1. Try metadata cover first (standard way)
+      String? coverPath;
+
+      // 1. Try to get the standard cover image from metadata
       if (book.coverImage != null) {
-        final imageBytes = book.coverImage!.content!;
-        coverPath = await _saveCoverImage(imageBytes, 'cover_from_metadata.png');
+        try {
+          // coverImage is already Uint8List, save directly
+          coverPath = await _saveCoverImage(book.coverImage!, 'cover_metadata.jpg');
+        } catch (e) {
+          debugPrint('Error saving metadata cover: $e');
+        }
       }
-      
-      // 2. Look for specific cover filenames if metadata cover failed
-      if (coverPath == null && book.content?.images != null && book.content!.images!.isNotEmpty) {
-        final List<String> coverFilenames = ['item_1.jpeg', 'item_1.jpg', 'logo.jpg', 'cover.jpg', 'cover.jpeg', 'thumb.jpg', 'thumbnail.jpg'];
+
+      // 2. If no cover found yet, search through all images in the book
+      if (coverPath == null && book.content?.images != null && book.content!.images.isNotEmpty) {
+        final List<String> validExts = ['.jpg', '.jpeg', '.png'];
         
-        // Scan for preferred names
-        for (var filename in coverFilenames) {
-          for (var entry in book.content!.images!.entries) {
-            final path = entry.key.toLowerCase();
-            if (path.endsWith(filename) || path.contains('/$filename')) {
-              coverPath = await _saveCoverImage(entry.value.content!, entry.key);
-              break;
-            }
-          }
-          if (coverPath != null) break;
-        }
+        // Filter and collect all valid images
+        final validImages = book.content!.images.entries.where((entry) {
+          final ext = entry.key.toLowerCase();
+          return validExts.any((e) => ext.endsWith(e)) && entry.value.content != null;
+        }).toList();
 
-        // 3. Fallback: Any image that looks like a cover (contains 'cover' in name)
-        if (coverPath == null) {
-          for (var entry in book.content!.images!.entries) {
-            if (entry.key.toLowerCase().contains('cover')) {
-              coverPath = await _saveCoverImage(entry.value.content!, entry.key);
-              break;
-            }
+        if (validImages.isNotEmpty) {
+          // Priority 1: Files with 'cover' in the name
+          var candidates = validImages.where((e) => e.key.toLowerCase().contains('cover')).toList();
+          
+          // Priority 2: Files with 'front' or 'logo' or 'item_1'
+          if (candidates.isEmpty) {
+            candidates = validImages.where((e) {
+              final k = e.key.toLowerCase();
+              return k.contains('front') || k.contains('logo') || k.contains('item_1');
+            }).toList();
           }
-        }
 
-        // 4. Ultimate Fallback: Take the first available image
-        if (coverPath == null) {
-          final firstEntry = book.content!.images!.entries.first;
-          coverPath = await _saveCoverImage(firstEntry.value.content!, firstEntry.key);
+          // Priority 3: Just use the largest images (often covers are higher resolution)
+          if (candidates.isEmpty) {
+            candidates = List.from(validImages);
+          }
+          
+          // Sort candidates by size descending to get the most likely "best" image
+          candidates.sort((a, b) => b.value.content!.length.compareTo(a.value.content!.length));
+          
+          final bestEntry = candidates.first;
+          coverPath = await _saveCoverImage(bestEntry.value.content!, bestEntry.key);
         }
       }
 
@@ -204,24 +213,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
-  Future<String> _saveCoverImage(List<int> bytes, String originalName) async {
+  Future<String> _saveCoverImage(dynamic bytes, String originalName) async {
     final appDir = await getApplicationDocumentsDirectory();
-    final sanitizedName = originalName.split('/').last;
+    String sanitizedName;
+    if (bytes is Uint8List) {
+      sanitizedName = originalName.split('/').last;
+    } else {
+      sanitizedName = originalName.replaceAll(RegExp(r'[^a-zA-Z0-9\.]'), '_');
+    }
     final fileName = 'cover_${DateTime.now().millisecondsSinceEpoch}_$sanitizedName';
     final file = File('${appDir.path}/$fileName');
-    await file.writeAsBytes(bytes);
+    await file.writeAsBytes(bytes is Uint8List ? bytes : bytes as List<int>);
     return file.path;
   }
 
   List<EpubChapter> _extractChapters(EpubBook book) {
     final chapters = <EpubChapter>[];
 
-    if (book.chapters != null) {
-      for (final chapter in book.chapters!) {
-        chapters.add(chapter);
-        if (chapter.subChapters != null) {
-          chapters.addAll(_extractSubChapters(chapter.subChapters!));
-        }
+    for (final chapter in book.chapters) {
+      chapters.add(chapter);
+      if (chapter.subChapters.isNotEmpty) {
+        chapters.addAll(_extractSubChapters(chapter.subChapters));
       }
     }
 
@@ -233,8 +245,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final chapters = <EpubChapter>[];
     for (final chapter in subChapters) {
       chapters.add(chapter);
-      if (chapter.subChapters != null) {
-        chapters.addAll(_extractSubChapters(chapter.subChapters!));
+      if (chapter.subChapters.isNotEmpty) {
+        chapters.addAll(_extractSubChapters(chapter.subChapters));
       }
     }
     return chapters;
@@ -249,9 +261,27 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
-  void _nextChapter() {
+  void _nextChapter() async {
     if (_currentChapterIndex < _chapters.length - 1) {
       _goToChapter(_currentChapterIndex + 1);
+      
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        int cr = prefs.getInt('chaptersRead') ?? 0;
+        await prefs.setInt('chaptersRead', cr + 1);
+      } catch (_) {}
+    } else if (_currentChapterIndex == _chapters.length - 1) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        List<String> completed = prefs.getStringList('completedBooksPaths') ?? [];
+        if (!completed.contains(widget.filePath)) {
+          completed.add(widget.filePath);
+          await prefs.setStringList('completedBooksPaths', completed);
+          
+          int bc = prefs.getInt('booksCompleted') ?? 0;
+          await prefs.setInt('booksCompleted', bc + 1);
+        }
+      } catch (_) {}
     }
   }
 
@@ -282,15 +312,24 @@ class _ReaderScreenState extends State<ReaderScreen> {
           'bookmarks': ['all'],
           'addedAt': DateTime.now().toIso8601String(),
           'lastChapter': 0,
+          'totalChapters': _chapters.length,
         });
         await prefs.setString('library', jsonEncode(books));
+        
+        // Stats: new book
+        int tb = prefs.getInt('totalBooks') ?? 0;
+        await prefs.setInt('totalBooks', tb + 1);
+        
         return true;
       } else if (coverPath != null) {
-        // Update cover if it was missing
+        // Update cover if it was missing or file is gone
         final index = books.indexWhere((b) => b['filePath'] == filePath);
-        if (index != -1 && books[index]['coverPath'] == null) {
-          books[index]['coverPath'] = coverPath;
-          await prefs.setString('library', jsonEncode(books));
+        if (index != -1) {
+          final existingCover = books[index]['coverPath'];
+          if (existingCover == null || !File(existingCover).existsSync()) {
+            books[index]['coverPath'] = coverPath;
+            await prefs.setString('library', jsonEncode(books));
+          }
         }
       }
       return false;
@@ -316,35 +355,52 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final isDark = settings.darkMode;
 
     return PopScope(
-      canPop: true,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop) {
-          _saveLastRead();
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await _saveLastRead();
+        if (context.mounted) {
+          Navigator.pop(context, result);
         }
       },
       child: Scaffold(
         extendBody: true,
         extendBodyBehindAppBar: true,
+        backgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFF5F5F7),
         appBar: _showUI 
           ? AppBar(
-              title: Text(_book?.title ?? 'Reading'),
-            backgroundColor: isDark ? Colors.black.withOpacity(0.7) : Colors.white.withOpacity(0.7),
-            elevation: 0,
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.text_fields),
-                onPressed: () => _showSettingsSheet(context),
-                tooltip: 'Text Settings',
-              ),
-              if (_chapters.isNotEmpty)
-                IconButton(
-                  icon: const Icon(Icons.list),
-                  onPressed: () => _showChapterList(context),
-                  tooltip: 'Chapters',
+              title: Text(
+                _book?.title ?? 'Reading', 
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.white : Colors.black87,
                 ),
-            ],
-          )
-        : null,
+              ),
+              flexibleSpace: ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                  child: Container(color: Colors.transparent),
+                ),
+              ),
+              backgroundColor: isDark ? Colors.black.withOpacity(0.4) : Colors.white.withOpacity(0.6),
+              elevation: 0,
+              iconTheme: IconThemeData(color: isDark ? Colors.white : Colors.black87),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.text_fields_rounded),
+                  onPressed: () => _showSettingsSheet(context),
+                  tooltip: 'Text Settings',
+                ),
+                if (_chapters.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.format_list_bulleted_rounded),
+                    onPressed: () => _showChapterList(context),
+                    tooltip: 'Chapters',
+                  ),
+              ],
+            )
+          : null,
       body: _buildBody(settings, isDark),
       bottomNavigationBar: _showUI ? _buildNavigationBar() : null,
     ));
@@ -404,22 +460,21 @@ class _ReaderScreenState extends State<ReaderScreen> {
         if (tts.isPlaying && currentText != null) {
           try {
             final highlightColor = isDark ? 'rgba(255, 255, 0, 0.3)' : 'rgba(255, 255, 0, 0.5)';
-            // We use a more flexible regex that ignores differences in whitespace and newlines
-            // but still targets the exact chunk text.
-            final escapedText = RegExp.escape(currentText)
-                .replaceAll(r'\ ', r'\s+'); // Allow any whitespace/newline variation
-            
-            final regex = RegExp(escapedText, multiLine: true);
-            
-            if (regex.hasMatch(displayContent)) {
-               displayContent = displayContent.replaceFirstMapped(
-                regex, 
-                (match) => '<readinghighlight id="current-reading-chunk" style="background-color: $highlightColor; border-radius: 4px; padding: 2px 0;">${match.group(0)}</readinghighlight>'
-              );
-            } else {
-              // Fallback: If exact match fails due to HTML tags inside a sentence, 
-              // we try to find it by splitting into words, but for now we'll log it.
-              debugPrint('TTS Highlighting: Could not find match for chunk: ${currentText.substring(0, 15)}...');
+            final words = currentText.split(RegExp(r'\s+')).where((w) => w.trim().isNotEmpty).toList();
+            if (words.isNotEmpty) {
+              final escapedWords = words.map((w) => RegExp.escape(w));
+              // Allow any combination of whitespace or HTML tags between words
+              final regexPattern = escapedWords.join(r'(?:\s*<[^>]+>\s*|\s+)');
+              final regex = RegExp(regexPattern, multiLine: true, caseSensitive: false);
+              
+              if (regex.hasMatch(displayContent)) {
+                 displayContent = displayContent.replaceFirstMapped(
+                  regex, 
+                  (match) => '<readinghighlight style="background-color: $highlightColor; border-radius: 4px;">${match.group(0)}</readinghighlight>'
+                );
+              } else {
+                debugPrint('TTS Highlighting: Could not find match in HTML for chunk: ${currentText.substring(0, currentText.length > 20 ? 20 : currentText.length)}...');
+              }
             }
           } catch (e) {
             debugPrint('TTS Highlighting Error: $e');
@@ -562,35 +617,43 @@ class _ReaderScreenState extends State<ReaderScreen> {
       return _buildTtsFooter(isDark);
     }
 
-    return Container(
-      color: isDark ? Colors.grey[900] : Colors.grey[100],
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              TextButton.icon(
-                onPressed: canGoBack ? _previousChapter : null,
-                icon: const Icon(Icons.chevron_left),
-                label: const Text('Previous'),
-              ),
-              Text(
-                '${_currentChapterIndex + 1} / ${_chapters.length}',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+        child: Container(
+          color: isDark ? Colors.black.withOpacity(0.4) : Colors.white.withOpacity(0.6),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _buildTtsButton(),
                   TextButton.icon(
-                    onPressed: canGoForward ? _nextChapter : null,
-                    icon: const Text('Next'),
-                    label: const Icon(Icons.chevron_right),
+                    onPressed: canGoBack ? _previousChapter : null,
+                    icon: Icon(Icons.chevron_left, color: canGoBack ? (isDark ? Colors.white : Colors.black87) : Colors.grey),
+                    label: Text('Previous', style: TextStyle(color: canGoBack ? (isDark ? Colors.white : Colors.black87) : Colors.grey)),
+                  ),
+                  Text(
+                    '${_currentChapterIndex + 1} / ${_chapters.length}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.white70 : Colors.black87,
+                    ),
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTtsButton(),
+                      TextButton.icon(
+                        onPressed: canGoForward ? _nextChapter : null,
+                        icon: Text('Next', style: TextStyle(color: canGoForward ? (isDark ? Colors.white : Colors.black87) : Colors.grey)),
+                        label: Icon(Icons.chevron_right, color: canGoForward ? (isDark ? Colors.white : Colors.black87) : Colors.grey),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -599,46 +662,59 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Widget _buildTtsFooter(bool isDark) {
     final tts = Provider.of<TtsService>(context, listen: false);
-    return Container(
-      color: isDark ? Colors.blueGrey[900] : Colors.blue[50],
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+        child: Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF6C63FF).withOpacity(0.15) : const Color(0xFF6C63FF).withOpacity(0.1),
+            border: Border(top: BorderSide(color: const Color(0xFF6C63FF).withOpacity(0.2))),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
-                  icon: const Icon(Icons.first_page),
-                  onPressed: () => tts.previousParagraph(),
-                  tooltip: 'Prev Paragraph',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.navigate_before),
-                  onPressed: () => tts.previousSentence(),
-                  tooltip: 'Prev Sentence',
-                ),
-                FloatingActionButton.small(
-                  onPressed: () {
-                    if (tts.state == TtsState.playing) {
-                      tts.pause();
-                    } else {
-                      tts.resume();
-                    }
-                  },
-                  child: Icon(tts.state == TtsState.playing ? Icons.pause : Icons.play_arrow),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.navigate_next),
-                  onPressed: () => tts.nextSentence(),
-                  tooltip: 'Next Sentence',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.last_page),
-                  onPressed: () => tts.nextParagraph(),
-                  tooltip: 'Next Paragraph',
-                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.first_page_rounded),
+                      onPressed: () => tts.previousParagraph(),
+                      color: isDark ? Colors.white70 : Colors.black87,
+                      tooltip: 'Prev Paragraph',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.navigate_before_rounded),
+                      onPressed: () => tts.previousSentence(),
+                      color: isDark ? Colors.white70 : Colors.black87,
+                      tooltip: 'Prev Sentence',
+                    ),
+                    FloatingActionButton.small(
+                      backgroundColor: const Color(0xFF6C63FF),
+                      foregroundColor: Colors.white,
+                      elevation: 4,
+                      onPressed: () {
+                        if (tts.state == TtsState.playing) {
+                          tts.pause();
+                        } else {
+                          tts.resume();
+                        }
+                      },
+                      child: Icon(tts.state == TtsState.playing ? Icons.pause_rounded : Icons.play_arrow_rounded),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.navigate_next_rounded),
+                      onPressed: () => tts.nextSentence(),
+                      color: isDark ? Colors.white70 : Colors.black87,
+                      tooltip: 'Next Sentence',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.last_page_rounded),
+                      onPressed: () => tts.nextParagraph(),
+                      color: isDark ? Colors.white70 : Colors.black87,
+                      tooltip: 'Next Paragraph',
+                    ),
                 GestureDetector(
                   onLongPress: () => _showTtsQuickSettings(context, tts),
                   child: IconButton(
@@ -657,8 +733,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  ),
+);
+}
 
   Widget _buildTtsButton() {
     return Consumer<TtsService>(
@@ -687,10 +765,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
         // If we were already speaking this chapter but stopped, we continue.
         // If we just loaded the chapter, startChunk will be 0 or last saved.
         
-        setState(() => _isSpeaking = true);
+        setState(() {});
         tts.player.playerStateStream.listen((state) {
           if (state.processingState == ProcessingState.completed) {
-            if (mounted) setState(() => _isSpeaking = false);
+            // Playback complete
           }
         });
         tts.speak(plainText, startChunkIndex: startChunk);
@@ -717,89 +795,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     return content.replaceAll(RegExp(r' +'), ' ').replaceAll(RegExp(r'\n+'), '\n').trim();
   }
 
-  void _showTtsPlaybackControls(BuildContext context, TtsService tts) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Consumer<TtsService>(
-        builder: (context, tts, _) => Container(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Playback Controls',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Chunk ${tts.currentChunkIndex + 1} of ${tts.totalChunks}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.first_page),
-                    onPressed: () => tts.previousParagraph(),
-                    tooltip: 'Previous Paragraph',
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.navigate_before),
-                    onPressed: () => tts.previousSentence(),
-                    tooltip: 'Previous Sentence',
-                  ),
-                  FloatingActionButton(
-                    onPressed: () {
-                      if (tts.state == TtsState.playing) {
-                        tts.pause();
-                      } else {
-                        tts.resume();
-                      }
-                    },
-                    child: Icon(tts.state == TtsState.playing ? Icons.pause : Icons.play_arrow),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.navigate_next),
-                    onPressed: () => tts.nextSentence(),
-                    tooltip: 'Next Sentence',
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.last_page),
-                    onPressed: () => tts.nextParagraph(),
-                    tooltip: 'Next Paragraph',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      tts.stop();
-                      Navigator.pop(context);
-                    },
-                    icon: const Icon(Icons.stop),
-                    label: const Text('Stop TTS'),
-                  ),
-                  const SizedBox(width: 16),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _showTtsQuickSettings(context, tts);
-                    },
-                    icon: const Icon(Icons.settings),
-                    label: const Text('Settings'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+
 
   void _showTtsQuickSettings(BuildContext context, TtsService tts) async {
     final prefs = await SharedPreferences.getInstance();
@@ -901,7 +897,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _showSettingsSheet(BuildContext context) {
-    final settings = context.read<ReaderSettings>();
+    // Settings are available via context.read<ReaderSettings>() in the builder
 
     showModalBottomSheet(
       context: context,

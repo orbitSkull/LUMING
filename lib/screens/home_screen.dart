@@ -121,6 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadBooks() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     final data = prefs.getString('library');
     if (data != null) {
       final list = jsonDecode(data) as List;
@@ -265,6 +266,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _deleteBook(BookEntry book) {
+    if (book.coverPath != null && book.coverPath!.isNotEmpty) {
+      final coverFile = File(book.coverPath!);
+      if (coverFile.existsSync()) {
+        try {
+          coverFile.deleteSync();
+        } catch (_) {}
+      }
+    }
     setState(() {
       _books.removeWhere((b) => b.filePath == book.filePath);
       _saveBooks();
@@ -429,16 +438,24 @@ class _HomeScreenState extends State<HomeScreen> {
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.primaryContainer,
                       borderRadius: BorderRadius.circular(4),
+                      image: book.coverPath != null && File(book.coverPath!).existsSync()
+                          ? DecorationImage(
+                              image: FileImage(File(book.coverPath!)),
+                              fit: BoxFit.cover,
+                            )
+                          : null,
                     ),
-                    child: Center(
-                      child: Text(
-                        book.title.isNotEmpty ? book.title[0].toUpperCase() : '?',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onPrimaryContainer,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
+                    child: book.coverPath != null && File(book.coverPath!).existsSync()
+                        ? null
+                        : Center(
+                            child: Text(
+                              book.title.isNotEmpty ? book.title[0].toUpperCase() : '?',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
                   ),
                   title: Text(
                     book.title,
