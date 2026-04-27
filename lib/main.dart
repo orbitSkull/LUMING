@@ -123,7 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _ensureStatsInitialized() async {
-    final statsFile = File(_storage.overallStatsFile);
+    final statsFile = File(_storage.readerStatsFile);
     if (!statsFile.existsSync()) {
       await statsFile.writeAsString(jsonEncode({
         'totalBooks': 0,
@@ -213,12 +213,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _showWriterToast() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Coming Soon')),
-    );
-  }
-
   Future<void> _openFile() async {
     setState(() => _isLoading = true);
 
@@ -229,30 +223,18 @@ class _HomeScreenState extends State<HomeScreen> {
         allowMultiple: false,
       );
 
-      if (result != null && result.files.isNotEmpty) {
-        final file = result.files.first;
-        String filePath;
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.first;
+      String? filePath = file.path;
 
-        if (!kIsWeb && file.path != null) {
-          filePath = file.path!;
-        } else if (file.bytes != null) {
-          final tempDir = Directory.systemTemp;
-          final tempFile = File('${tempDir.path}/${file.name}');
-          await tempFile.writeAsBytes(file.bytes!);
-          filePath = tempFile.path;
-        } else if (file.path != null) {
-          filePath = file.path!;
-        } else {
-          throw Exception('No file selected');
-        }
-
+      if (filePath != null) {
         if (mounted) {
           final isNew = !_books.any((b) => b.filePath == filePath);
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (context) => ReaderScreen(
-                filePath: filePath,
+                filePath: filePath!,
                 startChapter: 0,
               ),
             ),
@@ -265,7 +247,14 @@ class _HomeScreenState extends State<HomeScreen> {
             }
           });
         }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not get file path')),
+          );
+        }
       }
+    }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -289,7 +278,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (_sortBy == 'date') {
-      books.sort((a, b) => b.addedAt.compareTo(a.addedAt));
+      books.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     } else if (_sortBy == 'title') {
       books.sort((a, b) => a.title.compareTo(b.title));
     }
@@ -444,7 +433,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 spacing: 8,
                 children: [
                   ChoiceChip(
-                    label: const Text('Date Added'),
+                    label: const Text('Last Read'),
                     selected: _sortBy == 'date',
                     onSelected: (_) {
                       setSheetState(() => _sortBy = 'date');

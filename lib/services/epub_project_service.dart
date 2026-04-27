@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -95,7 +94,6 @@ class EpubProjectService {
     archive.addFile(ArchiveFile('OEBPS/cover.jpg', coverJpg.length, Uint8List.fromList(coverJpg)));
     
     final encoded = ZipEncoder().encode(archive);
-    if (encoded == null) throw Exception('Failed to encode EPUB');
     
     final file = File(epubPath);
     await file.writeAsBytes(encoded);
@@ -149,7 +147,7 @@ class EpubProjectService {
           
           String? coverHref;
           if (coverId != null) {
-            final itemMatch = RegExp('<item[^>]+id\\s*=\\s*["' "'" r']' + coverId + r'["' "'" r']' + r'[^>]+href\\s*=\\s*["' "'" r']([^"' "'" r']+)["' "'" r']', caseSensitive: false).firstMatch(opfContent);
+            final itemMatch = RegExp('<item[^>]+id\\s*=\\s*["\' ]$coverId["\' ][^>]+href\\s*=\\s*["\' ]([^"\' ]+)["\' ]', caseSensitive: false).firstMatch(opfContent);
             coverHref = itemMatch?.group(1);
           }
           
@@ -427,8 +425,11 @@ class EpubProjectService {
       for (final af in archive.files) {
         if (af.name.startsWith('OEBPS/cover.')) {
           coverHref = af.name.replaceFirst('OEBPS/', '');
-          if (coverHref.endsWith('.png')) coverMediaType = 'image/png';
-          else if (coverHref.endsWith('.gif')) coverMediaType = 'image/gif';
+          if (coverHref.endsWith('.png')) {
+            coverMediaType = 'image/png';
+          } else if (coverHref.endsWith('.gif')) {
+            coverMediaType = 'image/gif';
+          }
           break;
         }
       }
@@ -496,9 +497,7 @@ class EpubProjectService {
       }
 
       final encoded = ZipEncoder().encode(newArchive);
-      if (encoded != null) {
-        await file.writeAsBytes(encoded);
-      }
+      await file.writeAsBytes(encoded);
     } catch (e) {
       debugPrint('Error updating epub: $e');
     }
@@ -531,17 +530,17 @@ class EpubProjectService {
             var opfContent = utf8.decode(af.content);
             final mediaType = (ext == 'png') ? 'image/png' : 'image/jpeg';
             
-            if (opfContent.contains('id="cover-image"')) {
-               opfContent = opfContent.replaceAll(
-                 RegExp(r'<item id="cover-image" href="[^"]+" media-type="[^"]+"/>'),
-                 '<item id="cover-image" href="$coverName" media-type="$mediaType"/>'
-               );
-            } else {
-               opfContent = opfContent.replaceFirst(
-                 '<manifest>',
-                 '<manifest>\n    <item id="cover-image" href="$coverName" media-type="$mediaType"/>'
-               );
-            }
+          if (opfContent.contains('id="cover-image"')) {
+            opfContent = opfContent.replaceAll(
+              RegExp(r'<item id="cover-image" href="[^"]+" media-type="[^"]+"/>'),
+              '<item id="cover-image" href="$coverName" media-type="$mediaType"/>',
+            );
+          } else {
+            opfContent = opfContent.replaceFirst(
+              '<manifest>',
+              '<manifest>\n    <item id="cover-image" href="$coverName" media-type="$mediaType"/>',
+            );
+          }
             newArchive.addFile(ArchiveFile(af.name, opfContent.length, Uint8List.fromList(opfContent.codeUnits)));
           } else {
             newArchive.addFile(af);
@@ -550,9 +549,7 @@ class EpubProjectService {
       }
 
       final encoded = ZipEncoder().encode(newArchive);
-      if (encoded != null) {
-        await file.writeAsBytes(encoded);
-      }
+      await file.writeAsBytes(encoded);
     } catch (e) {
       debugPrint('Error setting cover: $e');
     }
@@ -587,9 +584,7 @@ class EpubProjectService {
       }
 
       final encoded = ZipEncoder().encode(newArchive);
-      if (encoded != null) {
-        await file.writeAsBytes(encoded);
-      }
+      await file.writeAsBytes(encoded);
     } catch (e) {
       debugPrint('Error removing cover: $e');
     }

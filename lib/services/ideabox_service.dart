@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'storage_service.dart';
 
 class IdeaNote {
@@ -84,7 +85,7 @@ class IdeaBoxService {
 
   final StorageService _storageService = StorageService();
   List<IdeaNote> _ideas = [];
-  List<String> _categories = ['general', 'character', 'plot', 'dialogue', 'setting', 'world'];
+  final List<String> _categories = ['general', 'character', 'plot', 'dialogue', 'setting', 'world'];
 
   List<IdeaNote> get ideas => _ideas;
   List<String> get categories => _categories;
@@ -98,7 +99,7 @@ class IdeaBoxService {
         _ideas = list.map((e) => IdeaNote.fromJson(e)).toList();
       }
     } catch (e) {
-      print('Error loading ideabox ideas: $e');
+      debugPrint('Error loading ideabox ideas: $e');
     }
   }
 
@@ -109,7 +110,7 @@ class IdeaBoxService {
       final data = jsonEncode(_ideas.map((e) => e.toJson()).toList());
       await file.writeAsString(data);
     } catch (e) {
-      print('Error saving ideabox ideas: $e');
+      debugPrint('Error saving ideabox ideas: $e');
     }
   }
 

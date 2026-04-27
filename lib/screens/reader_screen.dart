@@ -8,14 +8,11 @@ import 'package:provider/provider.dart';
 import '../providers/reader_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'package:path_provider/path_provider.dart';
 import '../services/storage_service.dart';
-import '../services/writer_service.dart';
 import '../services/tts_service.dart';
 import '../models/book_entry.dart';
 import '../models/bookmark_type.dart';
 import '../models/piper_voice.dart';
-import 'package:just_audio/just_audio.dart' show ProcessingState;
 import 'package:archive/archive.dart';
 class ReaderScreen extends StatefulWidget {
   final String filePath;
@@ -141,6 +138,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           lastWasTts: wasTts,
           ttsLastChunk: wasTts ? _lastChunkIndex : entry.ttsLastChunk,
           ttsTotalChunks: tts.totalChunks,
+          updatedAt: DateTime.now(),
         );
       } else {
         entry = BookEntry(
@@ -148,6 +146,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           title: _book?.title ?? 'Unknown',
           bookmarks: [BookmarkType.all],
           addedAt: DateTime.now(),
+          updatedAt: DateTime.now(),
           lastChapter: _currentChapterIndex,
           totalChapters: _chapters.length,
           lastWasTts: wasTts,
@@ -227,7 +226,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             if (name.contains('meta-inf/')) continue;
             
             final content = imgFile.content;
-            if (content != null && content.isNotEmpty) {
+            if (content.isNotEmpty) {
               final ext = name.split('.').last;
               coverPath = await _saveCoverImage(content, 'cover.$ext');
               debugPrint('Saved cover: $coverPath');

@@ -564,7 +564,6 @@ class _VoiceSelectionModalState extends State<VoiceSelectionModal> {
                     ),
                     ...filteredCustom.map((voice) {
                       final isDownloaded = widget.downloadedVoices[voice.key] ?? false;
-                      final isSelected = widget.selectedCustomVoice?.key == voice.key;
                       return ListTile(
                         title: Text(voice.key),
                         subtitle: Text('${voice.language} - ${voice.quality} ${isDownloaded ? "(Downloaded)" : ""}'),

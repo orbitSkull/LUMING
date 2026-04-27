@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:path/path.dart' as p;
@@ -121,7 +119,7 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                 spacing: 8,
                 children: [
                   ChoiceChip(
-                    label: const Text('Last Edited'),
+                    label: const Text('Date Modified'),
                     selected: _sortBy == 'date',
                     onSelected: (_) {
                       setSheetState(() => _sortBy = 'date');
@@ -217,7 +215,6 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
 
         for (var projectFolder in projectFolders) {
           if (projectFolder is Directory) {
-            final folderName = p.basename(projectFolder.path);
             final entities = projectFolder.listSync();
             for (var entity in entities) {
               if (entity is File && entity.path.endsWith('.json')) {

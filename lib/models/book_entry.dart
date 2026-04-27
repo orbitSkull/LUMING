@@ -7,6 +7,7 @@ class BookEntry {
   final String? coverPath;
   final List<BookmarkType> bookmarks;
   final DateTime addedAt;
+  final DateTime updatedAt;
   final int lastChapter;
   final int totalChapters;
   final List<String> customLabels;
@@ -20,13 +21,14 @@ class BookEntry {
     this.coverPath,
     required this.bookmarks,
     required this.addedAt,
+    DateTime? updatedAt,
     this.lastChapter = 0,
     this.totalChapters = 1,
     this.customLabels = const [],
     this.lastWasTts = false,
     this.ttsLastChunk = 0,
     this.ttsTotalChunks = 0,
-  });
+  }) : updatedAt = updatedAt ?? addedAt;
 
   Map<String, dynamic> toJson() => {
         'filePath': filePath,
@@ -34,6 +36,7 @@ class BookEntry {
         'coverPath': coverPath,
         'bookmarks': bookmarks.map((b) => b.name).toList(),
         'addedAt': addedAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
         'lastChapter': lastChapter,
         'totalChapters': totalChapters,
         'customLabels': customLabels,
@@ -50,6 +53,9 @@ class BookEntry {
             .map((b) => BookmarkType.values.firstWhere((e) => e.name == b))
             .toList(),
         addedAt: DateTime.parse(json['addedAt']),
+        updatedAt: json['updatedAt'] != null 
+            ? DateTime.parse(json['updatedAt']) 
+            : DateTime.parse(json['addedAt']),
         lastChapter: json['lastChapter'] ?? 0,
         totalChapters: json['totalChapters'] ?? 1,
         customLabels: (json['customLabels'] as List?)?.cast<String>() ?? [],
@@ -64,6 +70,7 @@ class BookEntry {
     String? coverPath,
     List<BookmarkType>? bookmarks,
     DateTime? addedAt,
+    DateTime? updatedAt,
     int? lastChapter,
     int? totalChapters,
     List<String>? customLabels,
@@ -77,6 +84,7 @@ class BookEntry {
       coverPath: coverPath ?? this.coverPath,
       bookmarks: bookmarks ?? this.bookmarks,
       addedAt: addedAt ?? this.addedAt,
+      updatedAt: updatedAt ?? this.updatedAt,
       lastChapter: lastChapter ?? this.lastChapter,
       totalChapters: totalChapters ?? this.totalChapters,
       customLabels: customLabels ?? this.customLabels,

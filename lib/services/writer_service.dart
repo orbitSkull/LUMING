@@ -72,26 +72,13 @@ class WriterService {
   WriterStats get stats => _stats;
 
   Future<void> loadStats() async {
-    try {
-      final file = File(_storageService.overallStatsFile);
-      if (await file.exists()) {
-        final data = await file.readAsString();
-        _stats = WriterStats.fromJson(jsonDecode(data));
-        _checkStreak();
-      }
-    } catch (e) {
-      print('Error loading writer stats: $e');
-    }
+    // Writer stats are now per-project and calculated on the fly in the UI.
+    // Daily word count streaks might still use global tracking if desired,
+    // but the request asks for writer stats inside the Project folder.
   }
 
   Future<void> _saveStats() async {
-    try {
-      await _storageService.ensureDirectories();
-      final file = File(_storageService.overallStatsFile);
-      await file.writeAsString(jsonEncode(_stats.toJson()));
-    } catch (e) {
-      print('Error saving writer stats: $e');
-    }
+    // No longer saving to global stats.json
   }
 
   Future<void> _updateDailyStats(int wordsAdded) async {

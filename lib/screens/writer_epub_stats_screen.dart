@@ -1,10 +1,10 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:archive/archive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/epub_project_service.dart';
-import '../models/bookmark_type.dart';
 import '../models/episode_project.dart';
+import '../services/storage_service.dart';
 
 class WriterEpubStatsScreen extends StatefulWidget {
   final EpisodeProject project;
@@ -23,6 +23,7 @@ class _WriterEpubStatsScreenState extends State<WriterEpubStatsScreen> {
   int _paragraphCount = 0;
   DateTime? _lastModified;
   int? _goalWords;
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -33,8 +34,45 @@ class _WriterEpubStatsScreenState extends State<WriterEpubStatsScreen> {
   Future<void> _loadStats() async {
     if (widget.project.epubPath == null) return;
 
+    final projectDir = Directory(File(widget.project.epubPath!).parent.path);
+    final statsFile = File('${projectDir.path}/stats-${widget.project.id}.json');
+
+    if (statsFile.existsSync()) {
+      try {
+        final content = await statsFile.readAsString();
+        final data = jsonDecode(content);
+        if (mounted) {
+          setState(() {
+            _totalWords = data['totalWords'] ?? 0;
+            _totalChars = data['totalChars'] ?? 0;
+            _totalCharsNoSpaces = data['totalCharsNoSpaces'] ?? 0;
+            _chapterCount = data['chapterCount'] ?? 0;
+            _paragraphCount = data['paragraphCount'] ?? 0;
+            _lastModified = data['lastModified'] != null ? DateTime.parse(data['lastModified']) : widget.project.updatedAt;
+            _goalWords = data['goalWords'];
+            _isLoading = false;
+          });
+        }
+        // Even if we have cached stats, we might want to re-calculate if the EPUB is newer
+        final epubFile = File(widget.project.epubPath!);
+        if (epubFile.lastModifiedSync().isAfter(_lastModified ?? DateTime(0))) {
+          _calculateAndSaveStats();
+        }
+        return;
+      } catch (e) {
+        debugPrint('Error reading cached stats: $e');
+      }
+    }
+
+    await _calculateAndSaveStats();
+  }
+
+  Future<void> _calculateAndSaveStats() async {
     final file = File(widget.project.epubPath!);
-    if (!await file.existsSync()) return;
+    if (!file.existsSync()) {
+      setState(() => _isLoading = false);
+      return;
+    }
 
     try {
       final bytes = await file.readAsBytes();
@@ -47,11 +85,11 @@ class _WriterEpubStatsScreenState extends State<WriterEpubStatsScreen> {
       int paragraphCount = 0;
       
       for (final af in archive.files) {
-        if (af.name.startsWith('OEBPS/chapter') && af.name.endsWith('.xhtml')) {
+        if (af.name.contains('chapter') && (af.name.endsWith('.xhtml') || af.name.endsWith('.html'))) {
           chapterCount++;
           final htmlContent = String.fromCharCodes(af.content);
           
-          final bodyMatch = RegExp(r'<body>([\s\S]*)</body>', dotAll: true).firstMatch(htmlContent);
+          final bodyMatch = RegExp(r'<body[^>]*>([\s\S]*)</body>', dotAll: true, caseSensitive: false).firstMatch(htmlContent);
           final body = bodyMatch?.group(1) ?? '';
           
           final plainText = body.replaceAll(RegExp(r'<[^>]+>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -61,12 +99,30 @@ class _WriterEpubStatsScreenState extends State<WriterEpubStatsScreen> {
           totalWords += plainText.isEmpty ? 0 : plainText.split(RegExp(r'\s+')).length;
           
           paragraphCount += '\n'.allMatches(body).length;
+          if (body.contains('<p')) {
+             paragraphCount += '<p'.allMatches(body).length;
+          }
         }
       }
       
       final prefs = await SharedPreferences.getInstance();
       final goalStr = prefs.getString('writer_${widget.project.id}_goal');
       final goalWords = goalStr != null ? int.tryParse(goalStr) : null;
+      final lastModified = file.lastModifiedSync();
+
+      final statsData = {
+        'totalWords': totalWords,
+        'totalChars': totalChars,
+        'totalCharsNoSpaces': totalCharsNoSpaces,
+        'chapterCount': chapterCount,
+        'paragraphCount': paragraphCount,
+        'lastModified': lastModified.toIso8601String(),
+        'goalWords': goalWords,
+      };
+
+      final projectDir = Directory(file.parent.path);
+      final statsFile = File('${projectDir.path}/stats-${widget.project.id}.json');
+      await statsFile.writeAsString(jsonEncode(statsData));
 
       if (mounted) {
         setState(() {
@@ -75,12 +131,14 @@ class _WriterEpubStatsScreenState extends State<WriterEpubStatsScreen> {
           _totalCharsNoSpaces = totalCharsNoSpaces;
           _chapterCount = chapterCount;
           _paragraphCount = paragraphCount;
-          _lastModified = widget.project.updatedAt;
+          _lastModified = lastModified;
           _goalWords = goalWords;
+          _isLoading = false;
         });
       }
     } catch (e) {
-      debugPrint('Error loading stats: $e');
+      debugPrint('Error calculating stats: $e');
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -111,7 +169,9 @@ class _WriterEpubStatsScreenState extends State<WriterEpubStatsScreen> {
         title: Text(widget.project.title),
         backgroundColor: Colors.teal,
       ),
-      body: SingleChildScrollView(
+      body: _isLoading 
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -304,6 +364,16 @@ class _WriterEpubStatsScreenState extends State<WriterEpubStatsScreen> {
                 final prefs = await SharedPreferences.getInstance();
                 await prefs.setString('writer_${widget.project.id}_goal', goal.toString());
                 setState(() => _goalWords = goal);
+                // Also update the stats file
+                if (widget.project.epubPath != null) {
+                  final statsFile = File('${File(widget.project.epubPath!).parent.path}/stats-${widget.project.id}.json');
+                  if (statsFile.existsSync()) {
+                    final content = await statsFile.readAsString();
+                    final data = jsonDecode(content);
+                    data['goalWords'] = goal;
+                    await statsFile.writeAsString(jsonEncode(data));
+                  }
+                }
               }
               if (mounted) Navigator.pop(ctx);
             },

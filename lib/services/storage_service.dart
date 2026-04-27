@@ -1,7 +1,5 @@
 import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class StorageService {
   static final StorageService _instance = StorageService._internal();
@@ -19,7 +17,7 @@ class StorageService {
   String get settingsFile => '$rootPath/settings.json';
   String get continueFile => '$rootPath/continue.json';
   String get ideaboxFile => '$ideaboxPath/ideabox.json';
-  String get overallStatsFile => '$statsPath/stats.json';
+  String get readerStatsFile => '$statsPath/stats.json';
   String get publishedFile => '$rootPath/published.json';
 
   Future<bool> hasPermission() async {

@@ -39,6 +39,7 @@ class _WriterScreenState extends State<WriterScreen> {
 
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _isListening = false;
+  // ignore: unused_field
   String _lastRecognizedText = '';
 
   @override
@@ -492,6 +493,7 @@ class _WriterScreenState extends State<WriterScreen> {
     );
   }
 
+  // ignore: unused_element
   void _toggleListening() async {
     if (!_isListening) {
       bool available = await _speech.initialize(

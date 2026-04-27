@@ -1,10 +1,8 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/storage_service.dart';
-import '../services/epub_project_service.dart';
 import '../models/episode_project.dart';
 import '../models/bookmark_type.dart';
 import 'writer_epub_stats_screen.dart';
@@ -21,9 +19,9 @@ class _WriterStatsScreenState extends State<WriterStatsScreen> {
   bool _isLoading = true;
   bool _hasPermission = false;
   String? _projectFolderPath;
-  BookmarkType _selectedFilter = BookmarkType.all;
+  Set<BookmarkType> _selectedFilters = {};
+  String _sortBy = 'date';
   bool _isGridView = false;
-  final EpubProjectService _service = EpubProjectService();
 
   @override
   void initState() {
@@ -42,10 +40,21 @@ class _WriterStatsScreenState extends State<WriterStatsScreen> {
   }
 
   List<EpisodeProject> get _filteredProjects {
-    if (_selectedFilter == BookmarkType.all) {
-      return _projects;
+    var projects = List<EpisodeProject>.from(_projects);
+    
+    if (_selectedFilters.isNotEmpty) {
+      projects = projects.where((project) {
+        return project.bookmarks.any((b) => _selectedFilters.contains(b));
+      }).toList();
     }
-    return _projects.where((p) => p.bookmarks.contains(_selectedFilter)).toList();
+
+    if (_sortBy == 'date') {
+      projects.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    } else if (_sortBy == 'title') {
+      projects.sort((a, b) => a.title.compareTo(b.title));
+    }
+
+    return projects;
   }
 
   Future<void> _loadProjects() async {
@@ -86,31 +95,82 @@ class _WriterStatsScreenState extends State<WriterStatsScreen> {
   void _showFilterOptions() {
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Filter Projects', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: BookmarkType.values.map((type) {
-                final isSelected = _selectedFilter == type;
-                return FilterChip(
-                  label: Text(_getBookmarkLabel(type)),
-                  selected: isSelected,
-                  onSelected: (_) {
-                    Navigator.pop(ctx);
-                    setState(() => _selectedFilter = type);
-                  },
-                  avatar: isSelected ? const Icon(Icons.check, size: 18) : null,
-                );
-              }).toList(),
-            ),
-          ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setSheetState) => Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Filter & Sort',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      setSheetState(() {
+                        _selectedFilters = {};
+                        _sortBy = 'date';
+                      });
+                      setState(() {});
+                    },
+                    child: const Text('Reset'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Text('Sort by:'),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('Date Modified'),
+                    selected: _sortBy == 'date',
+                    onSelected: (_) {
+                      setSheetState(() => _sortBy = 'date');
+                      setState(() {});
+                    },
+                  ),
+                  ChoiceChip(
+                    label: const Text('Title'),
+                    selected: _sortBy == 'title',
+                    onSelected: (_) {
+                      setSheetState(() => _sortBy = 'title');
+                      setState(() {});
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Text('Filter by Bookmark:'),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: BookmarkType.values.map((type) {
+                  return FilterChip(
+                    label: Text(_getBookmarkLabel(type)),
+                    selected: _selectedFilters.contains(type),
+                    onSelected: (selected) {
+                      setSheetState(() {
+                        if (selected) {
+                          _selectedFilters.add(type);
+                        } else {
+                          _selectedFilters.remove(type);
+                        }
+                      });
+                      setState(() {});
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
       ),
     );
@@ -130,23 +190,6 @@ class _WriterStatsScreenState extends State<WriterStatsScreen> {
         return 'Favourite';
       case BookmarkType.custom:
         return 'Custom';
-    }
-  }
-
-  Color _getBookmarkColor(BookmarkType type) {
-    switch (type) {
-      case BookmarkType.all:
-        return Colors.teal;
-      case BookmarkType.completed:
-        return Colors.green;
-      case BookmarkType.inProgress:
-        return Colors.blue;
-      case BookmarkType.dropped:
-        return Colors.red;
-      case BookmarkType.favourite:
-        return Colors.amber;
-      case BookmarkType.custom:
-        return Colors.purple;
     }
   }
 
