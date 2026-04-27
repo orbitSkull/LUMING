@@ -1,5 +1,8 @@
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/storage_service.dart';
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
@@ -19,6 +22,12 @@ class _StatsScreenState extends State<StatsScreen> with SingleTickerProviderStat
   double _avgTtsSpeed = 1.0;
   int _listeningSessions = 0;
 
+  // Daily and weekly stats
+  int _todayChaptersRead = 0;
+  int _todayListeningMinutes = 0;
+  final List<int> _weeklyReadingMinutes = List.filled(7, 0);
+  final List<int> _weeklyListeningMinutes = List.filled(7, 0);
+
   @override
   void initState() {
     super.initState();
@@ -33,15 +42,64 @@ class _StatsScreenState extends State<StatsScreen> with SingleTickerProviderStat
   }
 
   Future<void> _loadStats() async {
+    final storage = StorageService();
+    
+    // Load Overall Stats
+    final statsFile = File(storage.overallStatsFile);
+    Map<String, dynamic> stats = {};
+    if (statsFile.existsSync()) {
+      try {
+        stats = jsonDecode(statsFile.readAsStringSync());
+      } catch (_) {}
+    }
+
+    // Load Today Stats
+    final todayFile = File(storage.getDailyStatsFile(DateTime.now()));
+    Map<String, dynamic> todayStats = {};
+    if (todayFile.existsSync()) {
+      try {
+        todayStats = jsonDecode(todayFile.readAsStringSync());
+      } catch (_) {}
+    }
+
+    // Load Weekly Stats
+    final now = DateTime.now();
+    final List<int> weeklyReading = List.filled(7, 0);
+    final List<int> weeklyListening = List.filled(7, 0);
+    
+    for (int i = 0; i < 7; i++) {
+      final date = now.subtract(Duration(days: i));
+      final file = File(storage.getDailyStatsFile(date));
+      if (file.existsSync()) {
+        try {
+          final data = jsonDecode(file.readAsStringSync());
+          int reading = (data['chaptersRead'] ?? 0) * 5;
+          int listening = data['listeningMinutes'] ?? 0;
+          int weekday = date.weekday; // 1 (Mon) to 7 (Sun)
+          weeklyReading[weekday - 1] = reading;
+          weeklyListening[weekday - 1] = listening;
+        } catch (_) {}
+      }
+    }
+
     final prefs = await SharedPreferences.getInstance();
+    
     setState(() {
-      _totalBooks = prefs.getInt('totalBooks') ?? 0;
-      _booksCompleted = prefs.getInt('booksCompleted') ?? 0;
-      _chaptersRead = prefs.getInt('chaptersRead') ?? 0;
-      _totalListeningMinutes = prefs.getInt('totalListeningMinutes') ?? 0;
-      _currentStreak = prefs.getInt('currentStreak') ?? 0;
-      _avgTtsSpeed = prefs.getDouble('avgTtsSpeed') ?? 1.0;
-      _listeningSessions = prefs.getInt('listeningSessions') ?? 0;
+      _totalBooks = stats['totalBooks'] ?? prefs.getInt('totalBooks') ?? 0;
+      _booksCompleted = stats['booksCompleted'] ?? prefs.getInt('booksCompleted') ?? 0;
+      _chaptersRead = stats['chaptersRead'] ?? prefs.getInt('chaptersRead') ?? 0;
+      _totalListeningMinutes = stats['totalListeningMinutes'] ?? prefs.getInt('totalListeningMinutes') ?? 0;
+      _currentStreak = stats['currentStreak'] ?? prefs.getInt('currentStreak') ?? 0;
+      _avgTtsSpeed = (stats['avgTtsSpeed'] ?? prefs.getDouble('avgTtsSpeed') ?? 1.0).toDouble();
+      _listeningSessions = stats['listeningSessions'] ?? prefs.getInt('listeningSessions') ?? 0;
+      
+      _todayChaptersRead = todayStats['chaptersRead'] ?? 0;
+      _todayListeningMinutes = todayStats['listeningMinutes'] ?? 0;
+      
+      for (int i = 0; i < 7; i++) {
+        _weeklyReadingMinutes[i] = weeklyReading[i];
+        _weeklyListeningMinutes[i] = weeklyListening[i];
+      }
     });
   }
 
@@ -74,8 +132,8 @@ class _StatsScreenState extends State<StatsScreen> with SingleTickerProviderStat
   }
 
   Widget _buildTodayTab() {
-    final todayReading = _chaptersRead * 5;
-    final todayListening = _totalListeningMinutes;
+    final todayReading = _todayChaptersRead * 5;
+    final todayListening = _todayListeningMinutes;
     final todayTotal = todayReading + todayListening;
     final readingPercent = todayTotal > 0 ? (todayReading / todayTotal * 100).round() : 0;
     final listeningPercent = todayTotal > 0 ? (todayListening / todayTotal * 100).round() : 0;
@@ -294,15 +352,23 @@ class _StatsScreenState extends State<StatsScreen> with SingleTickerProviderStat
     final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: days.map((day) {
-        final height = (day.hashCode % 100).toDouble() + 20;
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: List.generate(7, (index) {
+        final day = days[index];
+        final reading = _weeklyReadingMinutes[index];
+        final listening = _weeklyListeningMinutes[index];
+        final total = (reading + listening).toDouble();
+        
+        // Scale height (max 150 pixels for 120 minutes)
+        final height = (total / 120 * 150).clamp(4.0, 150.0);
+        
         return Column(
           children: [
             Container(
-              width: 30,
+              width: 25,
               height: height,
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary,
+                color: Theme.of(context).colorScheme.primary.withOpacity(0.8),
                 borderRadius: BorderRadius.circular(4),
               ),
             ),
@@ -310,7 +376,7 @@ class _StatsScreenState extends State<StatsScreen> with SingleTickerProviderStat
             Text(day, style: const TextStyle(fontSize: 10)),
           ],
         );
-      }).toList(),
+      }),
     );
   }
 

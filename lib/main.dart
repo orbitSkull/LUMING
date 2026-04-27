@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:just_audio_background/just_audio_background.dart';
+import 'services/storage_service.dart';
+import 'services/ideabox_service.dart';
 import 'models/bookmark_type.dart';
 import 'models/book_entry.dart';
 import 'screens/reader_screen.dart';
@@ -90,75 +92,52 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<BookEntry> _books = [];
-  List<BookmarkType> _globalBookmarks = [];
-  List<String> _globalCustomLabels = [];
   Set<BookmarkType> _selectedFilters = {};
   String _sortBy = 'date';
   bool _isLoading = false;
   int _currentIndex = 0;
-  bool _isGridView = false;
   bool _isWriterMode = false;
+  bool _hasPermission = false;
+  final StorageService _storage = StorageService();
 
   @override
   void initState() {
     super.initState();
-    _loadSettings();
+    _checkPermission();
+  }
+
+  Future<void> _checkPermission() async {
+    _hasPermission = await _storage.hasPermission();
+    if (_hasPermission) {
+      await _storage.ensureDirectories();
+      await _loadData();
+    }
+    setState(() {});
+  }
+
+  Future<void> _loadData() async {
     _loadBooks();
-    _loadGlobalBookmarks();
-    _loadGlobalCustomLabels();
+    WriterService().loadStats();
+    IdeaBoxService().loadIdeas();
+    _ensureStatsInitialized();
   }
 
-  Future<void> _loadGlobalCustomLabels() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      setState(() {
-        _globalCustomLabels = prefs.getStringList('globalCustomLabels') ?? [];
-      });
-    } catch (_) {}
-  }
-
-  Future<void> _saveGlobalCustomLabels() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('globalCustomLabels', _globalCustomLabels);
-  }
-
-  Future<void> _loadGlobalBookmarks() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final data = prefs.getStringList('globalBookmarks') ?? [];
-      setState(() {
-        _globalBookmarks = data
-            .map((name) {
-              try {
-                return BookmarkType.values.firstWhere((b) => b.name == name);
-              } catch (_) {
-                return null;
-              }
-            })
-            .whereType<BookmarkType>()
-            .toList();
-      });
-    } catch (_) {}
-  }
-
-  Future<void> _saveGlobalBookmarks() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('globalBookmarks', _globalBookmarks.map((b) => b.name).toList());
-  }
-
-  Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _isGridView = prefs.getBool('libraryGridView') ?? false;
-    });
-  }
-
-  Future<void> _toggleView() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _isGridView = !_isGridView;
-    });
-    await prefs.setBool('libraryGridView', _isGridView);
+  Future<void> _ensureStatsInitialized() async {
+    final statsFile = File(_storage.overallStatsFile);
+    if (!statsFile.existsSync()) {
+      await statsFile.writeAsString(jsonEncode({
+        'totalBooks': 0,
+        'booksCompleted': 0,
+        'chaptersRead': 0,
+        'totalListeningMinutes': 0,
+        'currentStreak': 0,
+        'avgTtsSpeed': 1.0,
+        'listeningSessions': 0,
+        'wordsRead': 0,
+        'completedBooksPaths': [],
+        'lastActiveDate': '',
+      }));
+    }
   }
 
   @override
@@ -168,49 +147,69 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadBooks() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
-    final data = prefs.getString('library');
-    if (data != null) {
-      final list = jsonDecode(data) as List;
-      setState(() {
-        _books = list.map((e) => BookEntry.fromJson(e)).toList();
-        _books.removeWhere((b) => !b.fileExists);
-      });
-    }
+    if (!_hasPermission) return;
+    try {
+      final libraryDir = Directory(_storage.libraryPath);
+      if (libraryDir.existsSync()) {
+        final List<BookEntry> books = [];
+        final entities = libraryDir.listSync();
+        for (var entity in entities) {
+          if (entity is File && entity.path.endsWith('.json')) {
+            try {
+              final content = await entity.readAsString();
+              books.add(BookEntry.fromJson(jsonDecode(content)));
+            } catch (_) {}
+          }
+        }
+        setState(() {
+          _books = books;
+          _books.removeWhere((b) => !b.fileExists);
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _saveBooks() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = jsonEncode(_books.map((e) => e.toJson()).toList());
-    await prefs.setString('library', data);
+    // Books are saved individually in their own files now.
+    // This method might not be needed globally anymore, but for backward compatibility
+    // or batch updates, it could iterate through _books.
+    for (var book in _books) {
+      final file = File(_storage.getBookEntryFile(book.title));
+      await file.writeAsString(jsonEncode(book.toJson()));
+    }
   }
 
   Future<void> _continueReading() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lastPath = prefs.getString('lastOpenedPath');
-    if (lastPath != null && File(lastPath).existsSync()) {
-      final chapterIndex = prefs.getInt('lastChapterIndex_$lastPath') ?? 0;
-      final isTts = prefs.getBool('lastWasTts_$lastPath') ?? false;
-      final chunkIndex = prefs.getInt('tts_chunk_$lastPath') ?? 0;
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ReaderScreen(
-            filePath: lastPath,
-            startChapter: chapterIndex,
-            isTts: isTts,
-            startChunk: chunkIndex,
-          ),
-        ),
-      ).then((_) => _loadBooks());
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No book to continue')),
-        );
-      }
+    if (!_hasPermission) {
+       _requestPermission();
+       return;
+    }
+    final continueFile = File(_storage.continueFile);
+    if (continueFile.existsSync()) {
+      try {
+        final data = jsonDecode(await continueFile.readAsString());
+        final lastPath = data['lastOpenedPath'];
+        if (lastPath != null && File(lastPath).existsSync()) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ReaderScreen(
+                filePath: lastPath,
+                startChapter: data['chapterIndex'] ?? 0,
+                isTts: data['isTts'] ?? false,
+                startChunk: data['chunkIndex'] ?? 0,
+              ),
+            ),
+          ).then((_) => _loadBooks());
+          return;
+        }
+      } catch (_) {}
+    }
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No book to continue')),
+      );
     }
   }
 
@@ -302,9 +301,9 @@ class _HomeScreenState extends State<HomeScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => _BookOptionsSheet(
+      builder: (context, settings, child) => _BookOptionsSheet(
         book: book,
-        globalCustomLabels: _globalCustomLabels,
+        globalCustomLabels: settings.globalCustomLabels,
         onBookmarkToggle: (type) => _toggleBookmark(book, type),
         onCustomLabelAdd: (name) => _addCustomLabel(book, name),
         onCustomLabelRemove: (name) => _removeCustomLabel(book, name),
@@ -321,11 +320,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _addCustomLabel(BookEntry book, String name) {
+    final settings = Provider.of<ReaderSettings>(context, listen: false);
+    settings.addGlobalCustomLabel(name);
+
     setState(() {
-      if (!_globalCustomLabels.contains(name)) {
-        _globalCustomLabels.add(name);
-        _saveGlobalCustomLabels();
-      }
       final idx = _books.indexWhere((b) => b.filePath == book.filePath);
       if (idx != -1) {
         final customLabels = List<String>.from(_books[idx].customLabels);
@@ -381,11 +379,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openBook(BookEntry book) async {
-    final prefs = await SharedPreferences.getInstance();
-    final chapterIndex = prefs.getInt('lastChapterIndex_${book.filePath}') ?? 0;
-    final isTts = prefs.getBool('lastWasTts_${book.filePath}') ?? false;
-    final chunkIndex = prefs.getInt('tts_chunk_${book.filePath}') ?? 0;
-
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -533,40 +526,69 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLibrary() {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Library'),
-        actions: [
-          IconButton(
-            icon: Icon(_isGridView ? Icons.view_list : Icons.grid_view),
-            onPressed: _toggleView,
-            tooltip: _isGridView ? 'Switch to List View' : 'Switch to Grid View',
-          ),
-          IconButton(
-            icon: const Icon(Icons.filter_list),
-            onPressed: _showFilterSheet,
-            tooltip: 'Filter & Sort',
-          ),
-        ],
-      ),
-      body: _books.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.library_books_outlined, size: 64, color: Colors.grey),
-                  const SizedBox(height: 16),
-                  const Text('No books in library'),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Tap + to add your first book',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ],
+    return Consumer<ReaderSettings>(
+      builder: (context, settings, child) {
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Library'),
+            actions: [
+              IconButton(
+                icon: Icon(settings.libraryGridView ? Icons.view_list : Icons.grid_view),
+                onPressed: () => settings.setLibraryGridView(!settings.libraryGridView),
+                tooltip: settings.libraryGridView ? 'Switch to List View' : 'Switch to Grid View',
               ),
-            )
-          : _isGridView ? _buildGridView() : _buildListView(),
+              IconButton(
+                icon: const Icon(Icons.filter_list),
+                onPressed: _showFilterSheet,
+                tooltip: 'Filter & Sort',
+              ),
+            ],
+          ),
+          body: !_hasPermission 
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.folder_open, size: 64, color: Color(0xFF6C63FF)),
+                      const SizedBox(height: 16),
+                      const Text('Storage Permission Required', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 24),
+                      ElevatedButton.icon(
+                        onPressed: _requestPermission,
+                        icon: const Icon(Icons.security),
+                        label: const Text('Set Up Storage'),
+                      ),
+                    ],
+                  ),
+                )
+              : _books.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.library_books_outlined, size: 64, color: Colors.grey),
+                          const SizedBox(height: 16),
+                          const Text('No books in library'),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Tap + to add your first book',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    )
+                  : settings.libraryGridView ? _buildGridView() : _buildListView(),
+        );
+      },
     );
+  }
+
+  Future<void> _requestPermission() async {
+    final granted = await _storage.requestPermission();
+    if (granted) {
+      setState(() => _hasPermission = true);
+      _loadData();
+    }
   }
 
   Widget _buildListView() {

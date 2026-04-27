@@ -1,6 +1,6 @@
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
+import 'storage_service.dart';
 
 class IdeaNote {
   final String id;
@@ -82,6 +82,7 @@ class IdeaBoxService {
   factory IdeaBoxService() => _instance;
   IdeaBoxService._internal();
 
+  final StorageService _storageService = StorageService();
   List<IdeaNote> _ideas = [];
   List<String> _categories = ['general', 'character', 'plot', 'dialogue', 'setting', 'world'];
 
@@ -89,18 +90,27 @@ class IdeaBoxService {
   List<String> get categories => _categories;
 
   Future<void> loadIdeas() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('ideaBoxIdeas');
-    if (data != null) {
-      final list = jsonDecode(data) as List;
-      _ideas = list.map((e) => IdeaNote.fromJson(e)).toList();
+    try {
+      final file = File(_storageService.ideaboxFile);
+      if (await file.exists()) {
+        final data = await file.readAsString();
+        final list = jsonDecode(data) as List;
+        _ideas = list.map((e) => IdeaNote.fromJson(e)).toList();
+      }
+    } catch (e) {
+      print('Error loading ideabox ideas: $e');
     }
   }
 
   Future<void> _saveIdeas() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = jsonEncode(_ideas.map((e) => e.toJson()).toList());
-    await prefs.setString('ideaBoxIdeas', data);
+    try {
+      await _storageService.ensureDirectories();
+      final file = File(_storageService.ideaboxFile);
+      final data = jsonEncode(_ideas.map((e) => e.toJson()).toList());
+      await file.writeAsString(data);
+    } catch (e) {
+      print('Error saving ideabox ideas: $e');
+    }
   }
 
   Future<void> addIdea(String content, {String category = 'general', List<String>? tags, bool isVoiceNote = false}) async {

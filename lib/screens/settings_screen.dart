@@ -5,7 +5,8 @@ import 'package:piper_tts_plugin/enums/piper_voice_pack.dart';
 import '../providers/reader_settings.dart';
 import '../services/tts_service.dart';
 import '../models/piper_voice.dart';
-import 'dart:io';
+import '../services/storage_service.dart';
+import 'dart:convert';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -33,26 +34,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
+    final storage = StorageService();
+    final settingsFile = File(storage.settingsFile);
+    Map<String, dynamic> settings = {};
+    if (settingsFile.existsSync()) {
+      try {
+        settings = jsonDecode(settingsFile.readAsStringSync());
+      } catch (_) {}
+    }
+
     final prefs = await SharedPreferences.getInstance();
-    final voiceIndex = prefs.getInt('selectedVoice') ?? PiperVoicePack.norman.index;
-    final _ = prefs.getString('selectedCustomVoiceKey');
+    final voiceIndex = settings['selectedVoice'] ?? prefs.getInt('selectedVoice') ?? PiperVoicePack.norman.index;
     
     setState(() {
-      _defaultSpeechRate = prefs.getDouble('defaultSpeechRate') ?? 1.0;
-      _defaultPitch = prefs.getDouble('defaultPitch') ?? 1.0;
+      _defaultSpeechRate = settings['defaultSpeechRate'] ?? prefs.getDouble('defaultSpeechRate') ?? 1.0;
+      _defaultPitch = settings['defaultPitch'] ?? prefs.getDouble('defaultPitch') ?? 1.0;
       _selectedVoicePack = PiperVoicePack.values[voiceIndex.clamp(0, PiperVoicePack.values.length - 1)];
-      // _selectedCustomVoice will be updated when voices are fetched in build/consumer
     });
   }
 
   Future<void> _checkDownloadedVoices() async {
+    final storage = StorageService();
+    final settingsFile = File(storage.settingsFile);
+    Map<String, dynamic> settings = {};
+    if (settingsFile.existsSync()) {
+      try {
+        settings = jsonDecode(settingsFile.readAsStringSync());
+      } catch (_) {}
+    }
+
     final prefs = await SharedPreferences.getInstance();
     Map<String, bool> status = {};
     
     // Check built-in voices
     for (var voice in PiperVoicePack.values) {
-      final modelPath = prefs.getString(voice.modelPrefKey);
-      final jsonPath = prefs.getString(voice.jsonPrefKey);
+      final modelPath = settings[voice.modelPrefKey] ?? prefs.getString(voice.modelPrefKey);
+      final jsonPath = settings[voice.jsonPrefKey] ?? prefs.getString(voice.jsonPrefKey);
       status[voice.name] = modelPath != null && File(modelPath).existsSync() &&
                        jsonPath != null && File(jsonPath).existsSync();
     }
@@ -60,8 +77,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // Check custom voices from TtsService
     final tts = Provider.of<TtsService>(context, listen: false);
     for (var voice in tts.availableVoices) {
-      final modelPath = prefs.getString(voice.modelPrefKey);
-      final configPath = prefs.getString(voice.configPrefKey);
+      final modelPath = settings[voice.modelPrefKey] ?? prefs.getString(voice.modelPrefKey);
+      final configPath = settings[voice.configPrefKey] ?? prefs.getString(voice.configPrefKey);
       status[voice.key] = modelPath != null && File(modelPath).existsSync() &&
                           configPath != null && File(configPath).existsSync();
     }
@@ -72,6 +89,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _saveSettings() async {
+    final storage = StorageService();
+    final settingsFile = File(storage.settingsFile);
+    Map<String, dynamic> settings = {};
+    if (settingsFile.existsSync()) {
+      try {
+        settings = jsonDecode(settingsFile.readAsStringSync());
+      } catch (_) {}
+    }
+
+    settings['defaultSpeechRate'] = _defaultSpeechRate;
+    settings['defaultPitch'] = _defaultPitch;
+    if (_selectedCustomVoice == null) {
+      settings['selectedVoice'] = _selectedVoicePack.index;
+      settings.remove('selectedCustomVoiceKey');
+    } else {
+      settings['selectedCustomVoiceKey'] = _selectedCustomVoice!.key;
+    }
+
+    await settingsFile.writeAsString(jsonEncode(settings));
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('defaultSpeechRate', _defaultSpeechRate);
     await prefs.setDouble('defaultPitch', _defaultPitch);

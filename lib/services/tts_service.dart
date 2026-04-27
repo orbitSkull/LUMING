@@ -109,16 +109,28 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    _speechRate = prefs.getDouble('defaultSpeechRate') ?? 1.0;
-    _pitch = prefs.getDouble('defaultPitch') ?? 1.0;
+    final storage = StorageService();
+    final settingsFile = File(storage.settingsFile);
+    Map<String, dynamic> settings = {};
     
-    final customVoiceKey = prefs.getString('selectedCustomVoiceKey');
+    if (settingsFile.existsSync()) {
+      try {
+        settings = jsonDecode(settingsFile.readAsStringSync());
+      } catch (_) {}
+    }
+
+    // Fallback to SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    
+    _speechRate = settings['defaultSpeechRate']?.toDouble() ?? prefs.getDouble('defaultSpeechRate') ?? 1.0;
+    _pitch = settings['defaultPitch']?.toDouble() ?? prefs.getDouble('defaultPitch') ?? 1.0;
+    
+    final customVoiceKey = settings['selectedCustomVoiceKey'] ?? prefs.getString('selectedCustomVoiceKey');
     if (customVoiceKey != null) {
       // Create a temporary PiperVoice placeholder so initialize() can work 
       // immediately before fetchVoices() returns the full list from HF.
-      final modelPath = prefs.getString("piper_voice_custom_${customVoiceKey}_model");
-      final configPath = prefs.getString("piper_voice_custom_${customVoiceKey}_config");
+      final modelPath = settings["piper_voice_custom_${customVoiceKey}_model"] ?? prefs.getString("piper_voice_custom_${customVoiceKey}_model");
+      final configPath = settings["piper_voice_custom_${customVoiceKey}_config"] ?? prefs.getString("piper_voice_custom_${customVoiceKey}_config");
       
       if (modelPath != null && configPath != null) {
         _selectedCustomVoice = PiperVoice(
@@ -136,8 +148,42 @@ class TtsService extends ChangeNotifier {
       }
     }
 
-    final voiceIndex = prefs.getInt('selectedVoice') ?? PiperVoicePack.norman.index;
+    final voiceIndex = settings['selectedVoice'] ?? prefs.getInt('selectedVoice') ?? PiperVoicePack.norman.index;
     _selectedVoicePack = PiperVoicePack.values[voiceIndex.clamp(0, PiperVoicePack.values.length - 1)];
+  }
+
+  Future<void> _saveSettings() async {
+    final storage = StorageService();
+    final settingsFile = File(storage.settingsFile);
+    Map<String, dynamic> settings = {};
+    
+    if (settingsFile.existsSync()) {
+      try {
+        settings = jsonDecode(settingsFile.readAsStringSync());
+      } catch (_) {}
+    }
+
+    settings['defaultSpeechRate'] = _speechRate;
+    settings['defaultPitch'] = _pitch;
+    settings['selectedVoice'] = _selectedVoicePack.index;
+    if (_selectedCustomVoice != null) {
+      settings['selectedCustomVoiceKey'] = _selectedCustomVoice!.key;
+    } else {
+      settings.remove('selectedCustomVoiceKey');
+    }
+
+    await settingsFile.writeAsString(jsonEncode(settings));
+
+    // Backup to SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('defaultSpeechRate', _speechRate);
+    await prefs.setDouble('defaultPitch', _pitch);
+    await prefs.setInt('selectedVoice', _selectedVoicePack.index);
+    if (_selectedCustomVoice != null) {
+      await prefs.setString('selectedCustomVoiceKey', _selectedCustomVoice!.key);
+    } else {
+      await prefs.remove('selectedCustomVoiceKey');
+    }
   }
 
   bool _isFetchingVoices = false;
@@ -185,8 +231,7 @@ class TtsService extends ChangeNotifier {
 
   Future<void> setCustomVoice(PiperVoice voice) async {
     _selectedCustomVoice = voice;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('selectedCustomVoiceKey', voice.key);
+    await _saveSettings();
     _state = TtsState.idle;
     notifyListeners();
     await initialize();
@@ -194,6 +239,7 @@ class TtsService extends ChangeNotifier {
 
   void setSpeechRate(double rate) {
     _speechRate = rate.clamp(0.1, 4.0);
+    _saveSettings();
     // If we're playing, update the player speed immediately with correction
     if (_state == TtsState.playing || _state == TtsState.paused) {
       double speedCorrection = _sampleRate / 22050.0;
@@ -204,6 +250,7 @@ class TtsService extends ChangeNotifier {
 
   void setPitch(double pitch) {
     _pitch = pitch.clamp(0.1, 4.0);
+    _saveSettings();
     if (_state == TtsState.playing || _state == TtsState.paused) {
       _player.setPitch(_pitch);
     }
@@ -228,8 +275,7 @@ class TtsService extends ChangeNotifier {
   Future<void> setVoice(PiperVoicePack voice) async {
     _selectedVoicePack = voice;
     _selectedCustomVoice = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('selectedCustomVoiceKey');
+    await _saveSettings();
     _state = TtsState.idle;
     notifyListeners();
     await initialize();
@@ -249,11 +295,21 @@ class TtsService extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final storage = StorageService();
+      final settingsFile = File(storage.settingsFile);
+      Map<String, dynamic> settings = {};
+      
+      if (settingsFile.existsSync()) {
+        try {
+          settings = jsonDecode(settingsFile.readAsStringSync());
+        } catch (_) {}
+      }
+
       final prefs = await SharedPreferences.getInstance();
       
       if (_selectedCustomVoice != null) {
-        final modelPath = prefs.getString(_selectedCustomVoice!.modelPrefKey);
-        final configPath = prefs.getString(_selectedCustomVoice!.configPrefKey);
+        final modelPath = settings[_selectedCustomVoice!.modelPrefKey] ?? prefs.getString(_selectedCustomVoice!.modelPrefKey);
+        final configPath = settings[_selectedCustomVoice!.configPrefKey] ?? prefs.getString(_selectedCustomVoice!.configPrefKey);
         
         if (modelPath != null && configPath != null && File(modelPath).existsSync() && File(configPath).existsSync()) {
           // Extract sample rate and speaker info from config if possible
@@ -312,6 +368,21 @@ class TtsService extends ChangeNotifier {
         (p) => onProgress(0.8 + p * 0.2)
       );
 
+      final storage = StorageService();
+      final settingsFile = File(storage.settingsFile);
+      Map<String, dynamic> settings = {};
+      
+      if (settingsFile.existsSync()) {
+        try {
+          settings = jsonDecode(settingsFile.readAsStringSync());
+        } catch (_) {}
+      }
+
+      settings[voice.modelPrefKey] = modelPath;
+      settings[voice.configPrefKey] = configPath;
+      await settingsFile.writeAsString(jsonEncode(settings));
+
+      final prefs = await SharedPreferences.getInstance();
       await prefs.setString(voice.modelPrefKey, modelPath);
       await prefs.setString(voice.configPrefKey, configPath);
       
@@ -325,9 +396,19 @@ class TtsService extends ChangeNotifier {
 
   Future<void> deleteCustomVoice(PiperVoice voice) async {
     try {
+      final storage = StorageService();
+      final settingsFile = File(storage.settingsFile);
+      Map<String, dynamic> settings = {};
+      
+      if (settingsFile.existsSync()) {
+        try {
+          settings = jsonDecode(settingsFile.readAsStringSync());
+        } catch (_) {}
+      }
+
       final prefs = await SharedPreferences.getInstance();
-      final modelPath = prefs.getString(voice.modelPrefKey);
-      final configPath = prefs.getString(voice.configPrefKey);
+      final modelPath = settings[voice.modelPrefKey] ?? prefs.getString(voice.modelPrefKey);
+      final configPath = settings[voice.configPrefKey] ?? prefs.getString(voice.configPrefKey);
       
       if (modelPath != null) {
         final modelFile = File(modelPath);
@@ -342,6 +423,13 @@ class TtsService extends ChangeNotifier {
         }
       }
       
+      settings.remove(voice.modelPrefKey);
+      settings.remove(voice.configPrefKey);
+      if (settings['selectedCustomVoiceKey'] == voice.key) {
+        settings.remove('selectedCustomVoiceKey');
+      }
+      await settingsFile.writeAsString(jsonEncode(settings));
+
       await prefs.remove(voice.modelPrefKey);
       await prefs.remove(voice.configPrefKey);
       
@@ -358,9 +446,19 @@ class TtsService extends ChangeNotifier {
 
   Future<void> deleteVoice(PiperVoicePack pack) async {
     try {
+      final storage = StorageService();
+      final settingsFile = File(storage.settingsFile);
+      Map<String, dynamic> settings = {};
+      
+      if (settingsFile.existsSync()) {
+        try {
+          settings = jsonDecode(settingsFile.readAsStringSync());
+        } catch (_) {}
+      }
+
       final prefs = await SharedPreferences.getInstance();
-      final modelPath = prefs.getString(pack.modelPrefKey);
-      final jsonPath = prefs.getString(pack.jsonPrefKey);
+      final modelPath = settings[pack.modelPrefKey] ?? prefs.getString(pack.modelPrefKey);
+      final jsonPath = settings[pack.jsonPrefKey] ?? prefs.getString(pack.jsonPrefKey);
       
       if (modelPath != null) {
         final modelFile = File(modelPath);
@@ -375,6 +473,10 @@ class TtsService extends ChangeNotifier {
         }
       }
       
+      settings.remove(pack.modelPrefKey);
+      settings.remove(pack.jsonPrefKey);
+      await settingsFile.writeAsString(jsonEncode(settings));
+
       await prefs.remove(pack.modelPrefKey);
       await prefs.remove(pack.jsonPrefKey);
       
@@ -386,7 +488,6 @@ class TtsService extends ChangeNotifier {
 
   Future<void> downloadVoice(PiperVoicePack pack, Function(double) onProgress) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
       final uuidGen = const Uuid();
       final uniqueId = uuidGen.v4().replaceAll("-", "_");
 
@@ -402,6 +503,21 @@ class TtsService extends ChangeNotifier {
         (p) => onProgress(0.8 + p * 0.2) // Json is 20%
       );
 
+      final storage = StorageService();
+      final settingsFile = File(storage.settingsFile);
+      Map<String, dynamic> settings = {};
+      
+      if (settingsFile.existsSync()) {
+        try {
+          settings = jsonDecode(settingsFile.readAsStringSync());
+        } catch (_) {}
+      }
+
+      settings[pack.modelPrefKey] = modelPath;
+      settings[pack.jsonPrefKey] = jsonPath;
+      await settingsFile.writeAsString(jsonEncode(settings));
+
+      final prefs = await SharedPreferences.getInstance();
       await prefs.setString(pack.modelPrefKey, modelPath);
       await prefs.setString(pack.jsonPrefKey, jsonPath);
       
@@ -439,9 +555,10 @@ class TtsService extends ChangeNotifier {
   }
 
   List<String> _splitIntoChunks(String text) {
-    // Delimiters based on user request: ? . ! ; : "
-    // We split where these punctuation marks are followed by whitespace or end of string
-    final RegExp sentenceEnd = RegExp(r'(?<=[?\.!;:"])(?=\s|$)');
+    // Delimiters based on user request: ! ? . ; : "
+    // We split after these punctuation marks, keeping them with the preceding chunk.
+    // The lookbehind (?<=[...]) ensures we match AFTER the symbol.
+    final RegExp sentenceEnd = RegExp(r'(?<=[!?.;:"])');
     
     final List<String> paragraphs = text.split(RegExp(r'\n+'));
     final List<String> chunks = [];
@@ -460,7 +577,24 @@ class TtsService extends ChangeNotifier {
 
       _paragraphStartIndices.add(chunks.length);
       
-      final List<String> parts = paragraph.split(sentenceEnd);
+      // First split by the punctuation marks
+      final List<String> rawParts = paragraph.split(sentenceEnd);
+      final List<String> parts = [];
+      
+      // Combine parts to ensure we don't have too many tiny chunks (like just a closing quote)
+      String buffer = "";
+      for (var part in rawParts) {
+        buffer += part;
+        // If the part ends with one of our delimiters, or it's the last part, push it
+        if (RegExp(r'[!?.;:"]$').hasMatch(part.trim()) || part == rawParts.last) {
+          if (buffer.trim().isNotEmpty) {
+            parts.add(buffer);
+            buffer = "";
+          }
+        }
+      }
+      if (buffer.trim().isNotEmpty) parts.add(buffer);
+
       int paragraphOffset = 0;
       
       for (var part in parts) {
@@ -473,11 +607,11 @@ class TtsService extends ChangeNotifier {
           continue;
         }
 
-        // Secondary split for very long parts
-        if (trimmedPart.length > 300) {
+        // Secondary split only for extremely long parts without punctuation
+        if (trimmedPart.length > 500) {
           int subStart = 0;
           while (subStart < trimmedPart.length) {
-            int subEnd = subStart + 300;
+            int subEnd = subStart + 500;
             if (subEnd > trimmedPart.length) subEnd = trimmedPart.length;
             
             if (subEnd < trimmedPart.length) {
@@ -538,21 +672,50 @@ class TtsService extends ChangeNotifier {
 
       // Track words read and listening minutes
       try {
-        final prefs = await SharedPreferences.getInstance();
+        final storage = StorageService();
+        final now = DateTime.now();
+        
+        // Update Overall Stats
+        final statsFile = File(storage.overallStatsFile);
+        Map<String, dynamic> stats = {};
+        if (statsFile.existsSync()) {
+          stats = jsonDecode(statsFile.readAsStringSync());
+        }
+
         int wordsCount = text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length;
-        int wr = prefs.getInt('wordsRead') ?? 0;
-        await prefs.setInt('wordsRead', wr + wordsCount);
+        int wr = stats['wordsRead'] ?? 0;
+        stats['wordsRead'] = wr + wordsCount;
         
-        // Approx 130 words per minute. Let's just track word count and we can calculate minutes in Stats.
-        // Actually the StatsScreen reads 'totalListeningMinutes' directly. We add the exact fraction of a minute.
-        // Since we can't store floats in Int, we can store 'totalListeningSeconds' and derive minutes.
-        // But for simplicity, let's bump listening minutes by 1 every 130 words.
         int totalWords = wr + wordsCount;
-        await prefs.setInt('totalListeningMinutes', totalWords ~/ 130);
+        int newListeningMinutes = totalWords ~/ 130;
+        int minutesGained = newListeningMinutes - (stats['totalListeningMinutes'] ?? 0);
+        stats['totalListeningMinutes'] = newListeningMinutes;
         
-        // Also update avgTtsSpeed
-        double currentAvg = prefs.getDouble('avgTtsSpeed') ?? 1.0;
-        await prefs.setDouble('avgTtsSpeed', (currentAvg + _speechRate) / 2.0);
+        double currentAvg = stats['avgTtsSpeed']?.toDouble() ?? 1.0;
+        stats['avgTtsSpeed'] = (currentAvg + _speechRate) / 2.0;
+
+        await statsFile.writeAsString(jsonEncode(stats));
+
+        // Update Daily Stats
+        final dailyFile = File(storage.getDailyStatsFile(now));
+        Map<String, dynamic> dailyStats = {};
+        if (dailyFile.existsSync()) {
+          dailyStats = jsonDecode(dailyFile.readAsStringSync());
+        }
+        
+        dailyStats['wordsRead'] = (dailyStats['wordsRead'] ?? 0) + wordsCount;
+        // Approximation: listeningMinutes increases if total words crossed another 130-word threshold
+        if (minutesGained > 0) {
+          dailyStats['listeningMinutes'] = (dailyStats['listeningMinutes'] ?? 0) + minutesGained;
+        }
+        
+        await dailyFile.writeAsString(jsonEncode(dailyStats));
+
+        // Sync with SharedPreferences for backup
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt('wordsRead', stats['wordsRead']);
+        await prefs.setInt('totalListeningMinutes', stats['totalListeningMinutes']);
+        await prefs.setDouble('avgTtsSpeed', stats['avgTtsSpeed']);
       } catch (_) {}
 
       // Check again if we were stopped or if a new 'speak' call happened during synthesis
@@ -671,15 +834,21 @@ class TtsService extends ChangeNotifier {
       
       // Log a listening session
       try {
-        final prefs = await SharedPreferences.getInstance();
-        int ls = prefs.getInt('listeningSessions') ?? 0;
-        await prefs.setInt('listeningSessions', ls + 1);
+        final storage = StorageService();
+        final statsFile = File(storage.overallStatsFile);
+        Map<String, dynamic> stats = {};
+        if (statsFile.existsSync()) {
+          stats = jsonDecode(statsFile.readAsStringSync());
+        }
+
+        int ls = stats['listeningSessions'] ?? 0;
+        stats['listeningSessions'] = ls + 1;
         
         // Update daily streak based on today's date
         final today = DateTime.now().toIso8601String().substring(0, 10);
-        final lastActive = prefs.getString('lastActiveDate') ?? '';
+        final lastActive = stats['lastActiveDate'] ?? '';
         if (lastActive != today) {
-          int streak = prefs.getInt('currentStreak') ?? 0;
+          int streak = stats['currentStreak'] ?? 0;
           
           DateTime todayDate = DateTime.now();
           DateTime? lastDate;
@@ -692,9 +861,17 @@ class TtsService extends ChangeNotifier {
           } else if (lastDate == null || todayDate.difference(lastDate).inDays > 1) {
             streak = 1;
           }
-          await prefs.setInt('currentStreak', streak);
-          await prefs.setString('lastActiveDate', today);
+          stats['currentStreak'] = streak;
+          stats['lastActiveDate'] = today;
         }
+
+        await statsFile.writeAsString(jsonEncode(stats));
+
+        // Sync with SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt('listeningSessions', stats['listeningSessions']);
+        await prefs.setInt('currentStreak', stats['currentStreak'] ?? 0);
+        await prefs.setString('lastActiveDate', stats['lastActiveDate'] ?? '');
       } catch (_) {}
       
       debugPrint('TTS: Engine state before chunking: $_state (Loaded: $_isEngineLoaded)');

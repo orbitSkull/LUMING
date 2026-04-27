@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'writer_screen.dart';
 import '../services/epub_project_service.dart';
+import '../services/storage_service.dart';
 import '../models/bookmark_type.dart';
 import '../models/episode_project.dart';
 
@@ -21,7 +22,7 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
   List<EpisodeProject> _projects = [];
   bool _isLoading = true;
   bool _hasPermission = false;
-  String? _projectFolderPath;
+  final StorageService _storage = StorageService();
   bool _isGridView = false;
   final EpubProjectService _service = EpubProjectService();
   Set<BookmarkType> _selectedFilters = {};
@@ -197,11 +198,9 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
   }
 
   Future<void> _checkPermission() async {
-    final status = await Permission.manageExternalStorage.status;
-    _hasPermission = status.isGranted;
+    _hasPermission = await _storage.hasPermission();
     if (_hasPermission) {
-      final prefs = await SharedPreferences.getInstance();
-      _projectFolderPath = prefs.getString('writerProjectFolder');
+      await _storage.ensureDirectories();
       await _loadProjects();
     }
     setState(() => _isLoading = false);
@@ -209,42 +208,32 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
 
   Future<void> _loadProjects() async {
     setState(() => _isLoading = true);
-    if (_projectFolderPath == null) {
-      final folder = Directory('/storage/emulated/0/LUMING');
-      if (!folder.existsSync()) {
-        folder.createSync(recursive: true);
-      }
-      _projectFolderPath = folder.path;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('writerProjectFolder', folder.path);
-    }
 
     try {
-      final folder = Directory(_projectFolderPath!);
-      if (folder.existsSync()) {
-        final entities = folder.listSync();
-        final Map<String, EpisodeProject> projectMap = {};
+      final projectsDir = Directory(_storage.projectsPath);
+      if (projectsDir.existsSync()) {
+        final List<EpisodeProject> projects = [];
+        final projectFolders = projectsDir.listSync();
 
-        for (var entity in entities) {
-          if (entity is File && entity.path.endsWith('.json')) {
-            try {
-              final content = await entity.readAsString();
-              final json = jsonDecode(content);
-              final project = EpisodeProject.fromJson(json);
-              
-              if (project.epubPath != null && 
-                  File(project.epubPath!).existsSync()) {
-                if (!projectMap.containsKey(project.id) || 
-                    project.updatedAt.isAfter(projectMap[project.id]!.updatedAt)) {
-                  projectMap[project.id] = project;
+        for (var projectFolder in projectFolders) {
+          if (projectFolder is Directory) {
+            final folderName = p.basename(projectFolder.path);
+            final entities = projectFolder.listSync();
+            for (var entity in entities) {
+              if (entity is File && entity.path.endsWith('.json')) {
+                try {
+                  final content = await entity.readAsString();
+                  final json = jsonDecode(content);
+                  final project = EpisodeProject.fromJson(json);
+                  projects.add(project);
+                } catch (e) {
+                  debugPrint('Error loading project ${entity.path}: $e');
                 }
               }
-            } catch (e) {
-              debugPrint('Error loading project ${entity.path}: $e');
             }
           }
         }
-        _projects = projectMap.values.toList();
+        _projects = projects;
       }
     } catch (e) {
       debugPrint('Error loading projects: $e');
@@ -254,16 +243,19 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
   }
 
   Future<void> _saveProject(EpisodeProject project) async {
-    if (_projectFolderPath == null) return;
+    final projectDir = Directory(_storage.getProjectDir(project.title));
+    if (!projectDir.existsSync()) {
+      projectDir.createSync(recursive: true);
+    }
     
-    final filePath = '$_projectFolderPath/${_getJsonName(project.id)}';
-    
+    final filePath = '${projectDir.path}/${_getJsonName(project.id, project.title)}';
     final file = File(filePath);
     await file.writeAsString(jsonEncode(project.toJson()));
   }
 
-  String _getJsonName(String id) {
-    return 'project-$id.json';
+  String _getJsonName(String id, String title) {
+    final sanitized = title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+    return '$sanitized-$id.json';
   }
 
   void _showAddOptions() {
@@ -324,18 +316,20 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Cancel'),
           ),
-          TextButton(
+            TextButton(
             onPressed: () async {
               if (controller.text.isNotEmpty) {
+                final title = controller.text;
                 final now = DateTime.now();
                 final id = now.millisecondsSinceEpoch.toString();
-                String? epubPath;
+                final projectDir = _storage.getProjectDir(title);
                 
+                String? epubPath;
                 try {
                   epubPath = await _service.createEmptyEpub(
-                    controller.text,
+                    title,
                     id,
-                    _projectFolderPath!,
+                    projectDir,
                   );
                 } catch (e) {
                   if (mounted) {
@@ -348,7 +342,7 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                 
                 final project = EpisodeProject(
                   id: id,
-                  title: controller.text,
+                  title: title,
                   epubPath: epubPath,
                   createdAt: now,
                   updatedAt: now,
@@ -380,8 +374,38 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
       if (result != null && result.files.isNotEmpty) {
         final path = result.files.first.path;
         if (path != null) {
-          final project = await _service.importEpub(path, _projectFolderPath!);
-          if (project != null) {
+          final tempProject = await _service.importEpub(path, _storage.projectsPath);
+          if (tempProject != null) {
+            // Move it to its own folder
+            final projectDir = _storage.getProjectDir(tempProject.title);
+            if (!Directory(projectDir).existsSync()) {
+              Directory(projectDir).createSync(recursive: true);
+            }
+            
+            String? newEpubPath;
+            if (tempProject.epubPath != null) {
+              final oldEpubFile = File(tempProject.epubPath!);
+              newEpubPath = '$projectDir/${p.basename(tempProject.epubPath!)}';
+              oldEpubFile.renameSync(newEpubPath);
+            }
+
+            String? newCoverPath;
+            if (tempProject.coverPath != null) {
+              final oldCoverFile = File(tempProject.coverPath!);
+              newCoverPath = '$projectDir/${p.basename(tempProject.coverPath!)}';
+              oldCoverFile.renameSync(newCoverPath);
+            }
+
+            final project = EpisodeProject(
+              id: tempProject.id,
+              title: tempProject.title,
+              epubPath: newEpubPath,
+              coverPath: newCoverPath,
+              createdAt: tempProject.createdAt,
+              updatedAt: tempProject.updatedAt,
+              bookmarks: tempProject.bookmarks,
+            );
+
             await _saveProject(project);
             if (mounted) {
               _projects.insert(0, project);
@@ -399,27 +423,9 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
   }
 
   Future<void> _deleteProject(EpisodeProject project) async {
-    if (_projectFolderPath == null) return;
-    
-    final filePath = '$_projectFolderPath/${_getJsonName(project.id)}';
-    
-    final file = File(filePath);
-    if (file.existsSync()) {
-      file.deleteSync();
-    }
-    
-    if (project.epubPath != null) {
-      final epubFile = File(project.epubPath!);
-      if (epubFile.existsSync()) {
-        epubFile.deleteSync();
-      }
-    }
-
-    if (project.coverPath != null) {
-      final coverFile = File(project.coverPath!);
-      if (coverFile.existsSync()) {
-        coverFile.deleteSync();
-      }
+    final projectDir = Directory(_storage.getProjectDir(project.title));
+    if (projectDir.existsSync()) {
+      projectDir.deleteSync(recursive: true);
     }
     
     _projects.removeWhere((p) => p.id == project.id);
@@ -791,8 +797,8 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
       _loadProjects();
       return;
     }
-    final status = await Permission.manageExternalStorage.request();
-    if (status.isGranted) {
+    final granted = await _storage.requestPermission();
+    if (granted) {
       setState(() => _hasPermission = true);
       _loadProjects();
     }

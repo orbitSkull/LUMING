@@ -618,11 +618,20 @@ class _WriterScreenState extends State<WriterScreen> {
   String _downloadStatus = '';
 
   void _showTtsQuickSettings(BuildContext context, TtsService tts) async {
+    final storage = StorageService();
+    final settingsFile = File(storage.settingsFile);
+    Map<String, dynamic> settings = {};
+    if (settingsFile.existsSync()) {
+      try {
+        settings = jsonDecode(settingsFile.readAsStringSync());
+      } catch (_) {}
+    }
+    
     final prefs = await SharedPreferences.getInstance();
     final List<PiperVoice> downloadedVoices = [];
     
     for (var voice in tts.availableVoices) {
-      final modelPath = prefs.getString(voice.modelPrefKey);
+      final modelPath = settings[voice.modelPrefKey] ?? prefs.getString(voice.modelPrefKey);
       if (modelPath != null && File(modelPath).existsSync()) {
         downloadedVoices.add(voice);
       }

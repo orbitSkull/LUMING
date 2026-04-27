@@ -1,11 +1,5 @@
-import 'dart:io';
-import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:provider/provider.dart';
-import '../providers/reader_settings.dart';
-import '../services/tts_service.dart';
-import '../models/piper_voice.dart';
-import 'settings_screen.dart'; // Import VoiceSelectionModal
+import 'dart:convert';
+import '../services/storage_service.dart';
 
 class WriterSettingsScreen extends StatefulWidget {
   const WriterSettingsScreen({super.key});
@@ -25,14 +19,36 @@ class _WriterSettingsScreenState extends State<WriterSettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
+    final storage = StorageService();
+    final settingsFile = File(storage.settingsFile);
+    Map<String, dynamic> settings = {};
+    if (settingsFile.existsSync()) {
+      try {
+        settings = jsonDecode(settingsFile.readAsStringSync());
+      } catch (_) {}
+    }
+
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _autoSave = prefs.getBool('writer_autoSave') ?? true;
-      _autoCapitalization = prefs.getBool('writer_autoCapitalization') ?? true;
+      _autoSave = settings['writer_autoSave'] ?? prefs.getBool('writer_autoSave') ?? true;
+      _autoCapitalization = settings['writer_autoCapitalization'] ?? prefs.getBool('writer_autoCapitalization') ?? true;
     });
   }
 
   Future<void> _saveSettings() async {
+    final storage = StorageService();
+    final settingsFile = File(storage.settingsFile);
+    Map<String, dynamic> settings = {};
+    if (settingsFile.existsSync()) {
+      try {
+        settings = jsonDecode(settingsFile.readAsStringSync());
+      } catch (_) {}
+    }
+
+    settings['writer_autoSave'] = _autoSave;
+    settings['writer_autoCapitalization'] = _autoCapitalization;
+    await settingsFile.writeAsString(jsonEncode(settings));
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('writer_autoSave', _autoSave);
     await prefs.setBool('writer_autoCapitalization', _autoCapitalization);

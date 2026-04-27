@@ -3,10 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
-import '../services/epub_project_service.dart';
-import '../models/bookmark_type.dart';
-import '../models/episode_project.dart';
-import 'writer_epub_stats_screen.dart';
+import '../services/storage_service.dart';
 
 class WriterStatsScreen extends StatefulWidget {
   const WriterStatsScreen({super.key});
@@ -31,11 +28,10 @@ class _WriterStatsScreenState extends State<WriterStatsScreen> {
   }
 
   Future<void> _checkPermission() async {
-    final status = await Permission.manageExternalStorage.status;
-    _hasPermission = status.isGranted;
+    final storage = StorageService();
+    _hasPermission = await storage.hasPermission();
     if (_hasPermission) {
-      final prefs = await SharedPreferences.getInstance();
-      _projectFolderPath = prefs.getString('writerProjectFolder');
+      _projectFolderPath = storage.projectsPath;
       await _loadProjects();
     }
     setState(() => _isLoading = false);
@@ -49,33 +45,29 @@ class _WriterStatsScreenState extends State<WriterStatsScreen> {
   }
 
   Future<void> _loadProjects() async {
-    if (_projectFolderPath == null) {
-      final folder = Directory('/storage/emulated/0/LUMING');
-      if (!await folder.exists()) {
-        await folder.create(recursive: true);
-      }
-      _projectFolderPath = folder.path;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('writerProjectFolder', folder.path);
-    }
+    final storage = StorageService();
+    await storage.ensureDirectories();
+    _projectFolderPath = storage.projectsPath;
+    _projects = [];
 
     try {
       final folder = Directory(_projectFolderPath!);
       if (await folder.exists()) {
         final entities = folder.listSync();
         for (var entity in entities) {
-          if (entity is File && entity.path.endsWith('.json')) {
-            try {
-              final content = await entity.readAsString();
-              final json = jsonDecode(content);
-              final project = EpisodeProject.fromJson(json);
-              
-              if (project.epubPath != null && 
-                  await File(project.epubPath!).existsSync()) {
+          if (entity is Directory) {
+            final projectName = entity.path.split(Platform.pathSeparator).last;
+            final metaFile = File('${entity.path}/project-$projectName.json');
+            
+            if (await metaFile.exists()) {
+              try {
+                final content = await metaFile.readAsString();
+                final json = jsonDecode(content);
+                final project = EpisodeProject.fromJson(json);
                 _projects.add(project);
+              } catch (e) {
+                debugPrint('Error loading project meta in ${entity.path}: $e');
               }
-            } catch (e) {
-              debugPrint('Error loading project ${entity.path}: $e');
             }
           }
         }

@@ -9,7 +9,10 @@ import '../providers/reader_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
-import '../services/tts_service.dart';
+import '../services/storage_service.dart';
+import '../services/writer_service.dart';
+import '../models/book_entry.dart';
+import '../models/bookmark_type.dart';
 import '../models/piper_voice.dart';
 import 'package:just_audio/just_audio.dart' show ProcessingState;
 import 'package:archive/archive.dart';
@@ -85,6 +88,15 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Future<void> _saveLastTtsPosition(int chunkIndex) async {
     try {
+      final storage = StorageService();
+      final settingsFile = File(storage.settingsFile);
+      Map<String, dynamic> settings = {};
+      if (settingsFile.existsSync()) {
+        settings = jsonDecode(settingsFile.readAsStringSync());
+      }
+      settings['tts_chunk_${widget.filePath}'] = chunkIndex;
+      await settingsFile.writeAsString(jsonEncode(settings));
+
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('tts_chunk_${widget.filePath}', chunkIndex);
     } catch (_) {}
@@ -112,36 +124,47 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Future<void> _saveLastRead() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('lastOpenedPath', widget.filePath);
-      await prefs.setInt('lastChapterIndex_${widget.filePath}', _currentChapterIndex);
+      final storage = StorageService();
+      final bookFile = File(storage.getBookEntryFile(_book?.title ?? 'Unknown'));
       
       final tts = Provider.of<TtsService>(context, listen: false);
       final wasTts = tts.state == TtsState.playing || tts.state == TtsState.paused || _lastChunkIndex > 0;
-      await prefs.setBool('lastWasTts_${widget.filePath}', wasTts);
-      if (wasTts) {
-        await prefs.setInt('tts_chunk_${widget.filePath}', _lastChunkIndex);
-      }
-      
-      // Update the library entry as well
-      final data = prefs.getString('library');
-      if (data != null) {
-        List<Map<String, dynamic>> books = List<Map<String, dynamic>>.from(
-          (jsonDecode(data) as List).map((e) => Map<String, dynamic>.from(e))
+
+      BookEntry entry;
+      if (bookFile.existsSync()) {
+        final content = await bookFile.readAsString();
+        entry = BookEntry.fromJson(jsonDecode(content));
+        entry = entry.copyWith(
+          lastChapter: _currentChapterIndex,
+          totalChapters: _chapters.length,
+          lastWasTts: wasTts,
+          ttsLastChunk: wasTts ? _lastChunkIndex : entry.ttsLastChunk,
+          ttsTotalChunks: tts.totalChunks,
         );
-        
-        final index = books.indexWhere((b) => b['filePath'] == widget.filePath);
-        if (index != -1) {
-          books[index]['lastChapter'] = _currentChapterIndex;
-          books[index]['totalChapters'] = _chapters.length;
-          books[index]['lastWasTts'] = wasTts;
-          if (wasTts) {
-            books[index]['ttsLastChunk'] = _lastChunkIndex;
-            books[index]['ttsTotalChunks'] = tts.totalChunks;
-          }
-          await prefs.setString('library', jsonEncode(books));
-        }
+      } else {
+        entry = BookEntry(
+          filePath: widget.filePath,
+          title: _book?.title ?? 'Unknown',
+          bookmarks: [BookmarkType.all],
+          addedAt: DateTime.now(),
+          lastChapter: _currentChapterIndex,
+          totalChapters: _chapters.length,
+          lastWasTts: wasTts,
+          ttsLastChunk: wasTts ? _lastChunkIndex : 0,
+          ttsTotalChunks: tts.totalChunks,
+        );
       }
+      await bookFile.writeAsString(jsonEncode(entry.toJson()));
+
+      // Save continue.json
+      final continueFile = File(storage.continueFile);
+      await continueFile.writeAsString(jsonEncode({
+        'lastOpenedPath': widget.filePath,
+        'title': _book?.title ?? 'Unknown',
+        'chapterIndex': _currentChapterIndex,
+        'isTts': wasTts,
+        'chunkIndex': _lastChunkIndex,
+      }));
     } catch (_) {}
   }
 
@@ -246,7 +269,13 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<String> _saveCoverImage(dynamic bytes, String originalName) async {
-    final appDir = await getApplicationDocumentsDirectory();
+    final storage = StorageService();
+    final libraryDir = Directory(storage.libraryPath);
+    if (!libraryDir.existsSync()) libraryDir.createSync(recursive: true);
+    
+    final coversDir = Directory('${storage.libraryPath}/covers');
+    if (!coversDir.existsSync()) coversDir.createSync(recursive: true);
+
     String sanitizedName;
     if (bytes is Uint8List) {
       sanitizedName = originalName.split('/').last;
@@ -254,7 +283,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       sanitizedName = originalName.replaceAll(RegExp(r'[^a-zA-Z0-9\.]'), '_');
     }
     final fileName = 'cover_${DateTime.now().millisecondsSinceEpoch}_$sanitizedName';
-    final file = File('${appDir.path}/$fileName');
+    final file = File('${coversDir.path}/$fileName');
     await file.writeAsBytes(bytes is Uint8List ? bytes : bytes as List<int>);
     return file.path;
   }
@@ -301,20 +330,54 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _goToChapter(_currentChapterIndex + 1);
       
       try {
+        final storage = StorageService();
+        final now = DateTime.now();
+        
+        // Update Overall Stats
+        final statsFile = File(storage.overallStatsFile);
+        Map<String, dynamic> stats = {};
+        if (statsFile.existsSync()) {
+          stats = jsonDecode(statsFile.readAsStringSync());
+        }
+        
+        int cr = stats['chaptersRead'] ?? 0;
+        stats['chaptersRead'] = cr + 1;
+        await statsFile.writeAsString(jsonEncode(stats));
+
+        // Update Daily Stats
+        final dailyFile = File(storage.getDailyStatsFile(now));
+        Map<String, dynamic> dailyStats = {};
+        if (dailyFile.existsSync()) {
+          dailyStats = jsonDecode(dailyFile.readAsStringSync());
+        }
+        dailyStats['chaptersRead'] = (dailyStats['chaptersRead'] ?? 0) + 1;
+        await dailyFile.writeAsString(jsonEncode(dailyStats));
+
         final prefs = await SharedPreferences.getInstance();
-        int cr = prefs.getInt('chaptersRead') ?? 0;
-        await prefs.setInt('chaptersRead', cr + 1);
+        await prefs.setInt('chaptersRead', stats['chaptersRead']);
       } catch (_) {}
     } else if (_currentChapterIndex == _chapters.length - 1) {
       try {
-        final prefs = await SharedPreferences.getInstance();
-        List<String> completed = prefs.getStringList('completedBooksPaths') ?? [];
+        final storage = StorageService();
+        final statsFile = File(storage.overallStatsFile);
+        Map<String, dynamic> stats = {};
+        if (statsFile.existsSync()) {
+          stats = jsonDecode(statsFile.readAsStringSync());
+        }
+        
+        List<String> completed = List<String>.from(stats['completedBooksPaths'] ?? []);
         if (!completed.contains(widget.filePath)) {
           completed.add(widget.filePath);
-          await prefs.setStringList('completedBooksPaths', completed);
+          stats['completedBooksPaths'] = completed;
           
-          int bc = prefs.getInt('booksCompleted') ?? 0;
-          await prefs.setInt('booksCompleted', bc + 1);
+          int bc = stats['booksCompleted'] ?? 0;
+          stats['booksCompleted'] = bc + 1;
+          
+          await statsFile.writeAsString(jsonEncode(stats));
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setStringList('completedBooksPaths', completed);
+          await prefs.setInt('booksCompleted', stats['booksCompleted']);
         }
       } catch (_) {}
     }
@@ -328,50 +391,47 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   Future<bool> _addToLibrary(String filePath, String title, {String? coverPath, int totalChapters = 0}) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final data = prefs.getString('library');
-      List<Map<String, dynamic>> books = [];
+      final storage = StorageService();
+      final bookFile = File(storage.getBookEntryFile(title));
       
-      if (data != null) {
-        books = List<Map<String, dynamic>>.from(
-          (jsonDecode(data) as List).map((e) => Map<String, dynamic>.from(e))
+      if (!bookFile.existsSync()) {
+        final entry = BookEntry(
+          filePath: filePath,
+          title: title,
+          coverPath: coverPath,
+          bookmarks: [BookmarkType.all],
+          addedAt: DateTime.now(),
+          lastChapter: 0,
+          totalChapters: totalChapters,
         );
-      }
-
-      final index = books.indexWhere((b) => b['filePath'] == filePath);
-      if (index == -1) {
-        books.add({
-          'filePath': filePath,
-          'title': title,
-          'coverPath': coverPath,
-          'bookmarks': ['all'],
-          'addedAt': DateTime.now().toIso8601String(),
-          'lastChapter': 0,
-          'totalChapters': totalChapters,
-        });
-        await prefs.setString('library', jsonEncode(books));
+        await bookFile.writeAsString(jsonEncode(entry.toJson()));
         
-        // Stats: new book
-        int tb = prefs.getInt('totalBooks') ?? 0;
-        await prefs.setInt('totalBooks', tb + 1);
+        // Update stats
+        final statsFile = File(storage.overallStatsFile);
+        Map<String, dynamic> stats = {};
+        if (statsFile.existsSync()) {
+          stats = jsonDecode(await statsFile.readAsString());
+        }
+        stats['totalBooks'] = (stats['totalBooks'] ?? 0) + 1;
+        await statsFile.writeAsString(jsonEncode(stats));
         
         return true;
       } else {
+        final content = await bookFile.readAsString();
+        var entry = BookEntry.fromJson(jsonDecode(content));
         bool updated = false;
-        if (coverPath != null) {
-          final existingCover = books[index]['coverPath'];
-          if (existingCover == null || !File(existingCover).existsSync()) {
-            books[index]['coverPath'] = coverPath;
-            updated = true;
-          }
+        
+        if (coverPath != null && (entry.coverPath == null || !File(entry.coverPath!).existsSync())) {
+          entry = entry.copyWith(coverPath: coverPath);
+          updated = true;
         }
-        if (totalChapters > 0 && (books[index]['totalChapters'] ?? 0) == 0) {
-          books[index]['totalChapters'] = totalChapters;
+        if (totalChapters > 0 && entry.totalChapters == 0) {
+          entry = entry.copyWith(totalChapters: totalChapters);
           updated = true;
         }
         
         if (updated) {
-          await prefs.setString('library', jsonEncode(books));
+          await bookFile.writeAsString(jsonEncode(entry.toJson()));
         }
       }
       return false;
@@ -801,7 +861,14 @@ class _ReaderScreenState extends State<ReaderScreen> {
       final content = chapter.htmlContent ?? '';
       final plainText = _stripHtml(content);
       if (plainText.isNotEmpty) {
-        final prefs = await SharedPreferences.getInstance();
+        final storage = StorageService();
+        final settingsFile = File(storage.settingsFile);
+        Map<String, dynamic> settings = {};
+        if (settingsFile.existsSync()) {
+          try {
+            settings = jsonDecode(settingsFile.readAsStringSync());
+          } catch (_) {}
+        }
         
         int actualStartChunk = 0;
         if (startChunk != null) {
@@ -813,7 +880,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
         }
         
         if (actualStartChunk <= 0 && _currentChapterIndex == widget.startChapter) {
-           actualStartChunk = prefs.getInt('tts_chunk_${widget.filePath}') ?? 0;
+           final prefs = await SharedPreferences.getInstance();
+           actualStartChunk = settings['tts_chunk_${widget.filePath}'] ?? prefs.getInt('tts_chunk_${widget.filePath}') ?? 0;
         }
 
         setState(() {});
@@ -844,11 +912,20 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
 
   void _showTtsQuickSettings(BuildContext context, TtsService tts) async {
+    final storage = StorageService();
+    final settingsFile = File(storage.settingsFile);
+    Map<String, dynamic> settings = {};
+    if (settingsFile.existsSync()) {
+      try {
+        settings = jsonDecode(settingsFile.readAsStringSync());
+      } catch (_) {}
+    }
+    
     final prefs = await SharedPreferences.getInstance();
     final List<PiperVoice> downloadedVoices = [];
     
     for (var voice in tts.availableVoices) {
-      final modelPath = prefs.getString(voice.modelPrefKey);
+      final modelPath = settings[voice.modelPrefKey] ?? prefs.getString(voice.modelPrefKey);
       if (modelPath != null && File(modelPath).existsSync()) {
         downloadedVoices.add(voice);
       }

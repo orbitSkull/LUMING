@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:io';
+import '../services/storage_service.dart';
 
 class ReaderPortalScreen extends StatefulWidget {
   final VoidCallback onGoToLibrary;
@@ -22,6 +23,23 @@ class _ReaderPortalScreenState extends State<ReaderPortalScreen> {
   }
 
   Future<void> _loadCreations() async {
+    final storage = StorageService();
+    final file = File(storage.publishedFile);
+
+    if (await file.exists()) {
+      try {
+        final data = await file.readAsString();
+        final list = jsonDecode(data) as List;
+        setState(() {
+          _creations = list.map((e) => YourCreation.fromJson(e)).toList();
+        });
+        return;
+      } catch (e) {
+        debugPrint('Error loading creations from external storage: $e');
+      }
+    }
+
+    // Fallback to SharedPreferences
     final prefs = await SharedPreferences.getInstance();
     final data = prefs.getString('yourCreations');
     if (data != null) {
@@ -29,6 +47,13 @@ class _ReaderPortalScreenState extends State<ReaderPortalScreen> {
       setState(() {
         _creations = list.map((e) => YourCreation.fromJson(e)).toList();
       });
+      // Migrate to external storage if possible
+      try {
+        await storage.ensureDirectories();
+        await file.writeAsString(data);
+      } catch (e) {
+        debugPrint('Error migrating creations to external storage: $e');
+      }
     }
   }
 

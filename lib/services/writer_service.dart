@@ -1,5 +1,6 @@
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io';
+import 'storage_service.dart';
 
 class WriterStats {
   int totalWords = 0;
@@ -44,33 +45,87 @@ class WriterStats {
   }
 }
 
+class DailyStats {
+  final int wordCount;
+  final DateTime date;
+
+  DailyStats({required this.wordCount, required this.date});
+
+  Map<String, dynamic> toJson() => {
+    'wordCount': wordCount,
+    'date': date.toIso8601String(),
+  };
+
+  factory DailyStats.fromJson(Map<String, dynamic> json) => DailyStats(
+    wordCount: json['wordCount'] ?? 0,
+    date: DateTime.parse(json['date']),
+  );
+}
+
 class WriterService {
   static final WriterService _instance = WriterService._internal();
   factory WriterService() => _instance;
   WriterService._internal();
 
+  final StorageService _storageService = StorageService();
   WriterStats _stats = WriterStats();
   WriterStats get stats => _stats;
 
   Future<void> loadStats() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = prefs.getString('writerStats');
-    if (data != null) {
-      _stats = WriterStats.fromJson(jsonDecode(data));
-      _checkStreak();
+    try {
+      final file = File(_storageService.overallStatsFile);
+      if (await file.exists()) {
+        final data = await file.readAsString();
+        _stats = WriterStats.fromJson(jsonDecode(data));
+        _checkStreak();
+      }
+    } catch (e) {
+      print('Error loading writer stats: $e');
     }
   }
 
   Future<void> _saveStats() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('writerStats', jsonEncode(_stats.toJson()));
+    try {
+      await _storageService.ensureDirectories();
+      final file = File(_storageService.overallStatsFile);
+      await file.writeAsString(jsonEncode(_stats.toJson()));
+    } catch (e) {
+      print('Error saving writer stats: $e');
+    }
+  }
+
+  Future<void> _updateDailyStats(int wordsAdded) async {
+    try {
+      await _storageService.ensureDirectories();
+      final now = DateTime.now();
+      final file = File(_storageService.getDailyStatsFile(now));
+      
+      int currentDailyWords = 0;
+      if (await file.exists()) {
+        final data = await file.readAsString();
+        final json = jsonDecode(data);
+        currentDailyWords = json['wordCount'] ?? 0;
+      }
+      
+      final dailyStats = DailyStats(
+        wordCount: currentDailyWords + wordsAdded,
+        date: now,
+      );
+      
+      await file.writeAsString(jsonEncode(dailyStats.toJson()));
+    } catch (e) {
+      print('Error updating daily stats: $e');
+    }
   }
 
   void _checkStreak() {
     if (_stats.lastWritingDate != null) {
       final now = DateTime.now();
-      final daysSince = now.difference(_stats.lastWritingDate!).inDays;
-      if (daysSince > 1) {
+      final lastDate = DateTime(_stats.lastWritingDate!.year, _stats.lastWritingDate!.month, _stats.lastWritingDate!.day);
+      final today = DateTime(now.year, now.month, now.day);
+      final difference = today.difference(lastDate).inDays;
+      
+      if (difference > 1) {
         _stats.currentStreak = 0;
       }
     }
@@ -90,12 +145,19 @@ class WriterService {
   Future<void> endSession() async {
     if (_stats.sessionWords > 0) {
       final now = DateTime.now();
+      await _updateDailyStats(_stats.sessionWords);
+
       if (_stats.lastWritingDate != null) {
-        final daysSince = now.difference(_stats.lastWritingDate!).inDays;
-        if (daysSince == 1) {
+        final lastDate = DateTime(_stats.lastWritingDate!.year, _stats.lastWritingDate!.month, _stats.lastWritingDate!.day);
+        final today = DateTime(now.year, now.month, now.day);
+        final difference = today.difference(lastDate).inDays;
+
+        if (difference == 1) {
           _stats.currentStreak++;
-        } else if (daysSince > 1) {
+        } else if (difference > 1) {
           _stats.currentStreak = 1;
+        } else if (difference == 0) {
+          // Already wrote today, streak stays the same
         }
       } else {
         _stats.currentStreak = 1;
