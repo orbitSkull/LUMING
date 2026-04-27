@@ -123,7 +123,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<void> _saveLastRead() async {
     try {
       final storage = StorageService();
-      final bookFile = File(storage.getBookEntryFile(_book?.title ?? 'Unknown'));
+      final title = _book?.title ?? 'Unknown';
+      final bookFile = File(storage.getBookEntryFile(title));
+      
+      // Ensure book directory exists
+      final bookDir = Directory(storage.getBookDir(title));
+      if (!bookDir.existsSync()) bookDir.createSync(recursive: true);
       
       final tts = Provider.of<TtsService>(context, listen: false);
       final wasTts = tts.state == TtsState.playing || tts.state == TtsState.paused || _lastChunkIndex > 0;
@@ -184,6 +189,12 @@ class _ReaderScreenState extends State<ReaderScreen> {
       }
 
       final book = await EpubReader.readBook(bytes);
+      final title = book.title ?? 'Unknown';
+      
+      // Ensure book directory exists
+      final storage = StorageService();
+      final bookDir = Directory(storage.getBookDir(title));
+      if (!bookDir.existsSync()) bookDir.createSync(recursive: true);
 
       String? coverPath;
 
@@ -191,7 +202,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       if (book.coverImage != null && book.coverImage!.isNotEmpty) {
         try {
           debugPrint('Found cover from metadata, size: ${book.coverImage!.length}');
-          coverPath = await _saveCoverImage(book.coverImage!, 'cover_metadata.jpg');
+          coverPath = await _saveCoverImage(book.coverImage!, 'cover_metadata.jpg', title);
         } catch (e) {
           debugPrint('Error saving metadata cover: $e');
         }
@@ -228,7 +239,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
             final content = imgFile.content;
             if (content.isNotEmpty) {
               final ext = name.split('.').last;
-              coverPath = await _saveCoverImage(content, 'cover.$ext');
+              coverPath = await _saveCoverImage(content, 'cover.$ext', title);
               debugPrint('Saved cover: $coverPath');
               break;
             }
@@ -242,7 +253,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
       final chapters = _extractChapters(book);
 
-      final isFirstTime = await _addToLibrary(widget.filePath, book.title ?? 'Untitled', coverPath: coverPath, totalChapters: chapters.length);
+      final isFirstTime = await _addToLibrary(widget.filePath, title, coverPath: coverPath, totalChapters: chapters.length);
 
       if (mounted && isFirstTime) {
         _showBookAddedToast();
@@ -268,13 +279,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
-  Future<String> _saveCoverImage(dynamic bytes, String originalName) async {
+  Future<String> _saveCoverImage(dynamic bytes, String originalName, String title) async {
     final storage = StorageService();
-    final libraryDir = Directory(storage.libraryPath);
-    if (!libraryDir.existsSync()) libraryDir.createSync(recursive: true);
-    
-    final coversDir = Directory('${storage.libraryPath}/covers');
-    if (!coversDir.existsSync()) coversDir.createSync(recursive: true);
+    final bookDir = Directory(storage.getBookDir(title));
+    if (!bookDir.existsSync()) bookDir.createSync(recursive: true);
 
     String sanitizedName;
     if (bytes is Uint8List) {
@@ -282,8 +290,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
     } else {
       sanitizedName = originalName.replaceAll(RegExp(r'[^a-zA-Z0-9\.]'), '_');
     }
-    final fileName = 'cover_${DateTime.now().millisecondsSinceEpoch}_$sanitizedName';
-    final file = File('${coversDir.path}/$fileName');
+    final fileName = 'cover_$sanitizedName';
+    final file = File('${bookDir.path}/$fileName');
     await file.writeAsBytes(bytes is Uint8List ? bytes : bytes as List<int>);
     return file.path;
   }
@@ -392,6 +400,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<bool> _addToLibrary(String originalPath, String title, {String? coverPath, int totalChapters = 0}) async {
     try {
       final storage = StorageService();
+      final bookDir = Directory(storage.getBookDir(title));
+      if (!bookDir.existsSync()) bookDir.createSync(recursive: true);
+
       final bookFile = File(storage.getBookEntryFile(title));
       final targetPath = storage.getBookFilePath(title, originalPath);
       
@@ -471,7 +482,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         await _saveLastRead();
-        if (context.mounted) {
+        if (mounted) {
           Navigator.pop(context, result);
         }
       },

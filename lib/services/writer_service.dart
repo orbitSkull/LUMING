@@ -68,7 +68,7 @@ class WriterService {
   WriterService._internal();
 
   final StorageService _storageService = StorageService();
-  WriterStats _stats = WriterStats();
+  final WriterStats _stats = WriterStats();
   WriterStats get stats => _stats;
 
   Future<void> loadStats() async {
@@ -101,11 +101,12 @@ class WriterService {
       
       await file.writeAsString(jsonEncode(dailyStats.toJson()));
     } catch (e) {
+      // ignore: avoid_print
       print('Error updating daily stats: $e');
     }
   }
 
-  void _checkStreak() {
+  void checkStreak() {
     if (_stats.lastWritingDate != null) {
       final now = DateTime.now();
       final lastDate = DateTime(_stats.lastWritingDate!.year, _stats.lastWritingDate!.month, _stats.lastWritingDate!.day);

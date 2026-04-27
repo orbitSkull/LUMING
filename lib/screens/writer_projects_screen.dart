@@ -733,11 +733,35 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
                 title: const Text('Delete', style: TextStyle(color: Colors.red)),
-                onTap: () { Navigator.pop(ctx); _deleteProject(project); },
+                onTap: () { 
+                  Navigator.pop(ctx); 
+                  _showDeleteConfirm(project);
+                },
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  void _showDeleteConfirm(EpisodeProject project) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Project?'),
+        content: Text('This will permanently delete "${project.title}" and all its files from storage.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _deleteProject(project);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
       ),
     );
   }

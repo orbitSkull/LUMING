@@ -54,16 +54,21 @@ class StorageService {
     return '$statsPath/$dateStr.json';
   }
 
-  String getBookEntryFile(String title) {
-    // Sanitize title for filename
+  String getBookDir(String title) {
     final sanitized = title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-    return '$libraryPath/$sanitized.json';
+    return '$libraryPath/$sanitized';
+  }
+
+  String getBookEntryFile(String title) {
+    final dir = getBookDir(title);
+    return '$dir/metadata.json';
   }
 
   String getBookFilePath(String title, String originalPath) {
     final ext = originalPath.split('.').last;
+    final dir = getBookDir(title);
     final sanitized = title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-    return '$libraryPath/$sanitized.$ext';
+    return '$dir/$sanitized.$ext';
   }
 
   String getProjectDir(String projectName) {

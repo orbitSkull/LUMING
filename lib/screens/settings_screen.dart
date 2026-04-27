@@ -76,6 +76,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     
     // Check custom voices from TtsService
+    if (!mounted) return;
     final tts = Provider.of<TtsService>(context, listen: false);
     for (var voice in tts.availableVoices) {
       final modelPath = settings[voice.modelPrefKey] ?? prefs.getString(voice.modelPrefKey);
@@ -462,7 +463,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (voice != null) {
                 await tts.deleteCustomVoice(voice);
               }
-              _checkDownloadedVoices();
+              if (mounted) {
+                _checkDownloadedVoices();
+              }
             },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),

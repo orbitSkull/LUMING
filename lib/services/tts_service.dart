@@ -555,10 +555,9 @@ class TtsService extends ChangeNotifier {
   }
 
   List<String> _splitIntoChunks(String text) {
-    // Delimiters based on user request: ! ? . ; : "
-    // We split after these punctuation marks, keeping them with the preceding chunk.
-    // The lookbehind (?<=[...]) ensures we match AFTER the symbol.
-    final RegExp sentenceEnd = RegExp(r'(?<=[!?.;:"])');
+    // Delimiters based on user request: ! ? . ; :
+    // Removed " (quote) from delimiters as requested to prevent centering/highlighting issues
+    final RegExp sentenceEnd = RegExp(r'(?<=[!?.;:])');
     
     final List<String> paragraphs = text.split(RegExp(r'\n+'));
     final List<String> chunks = [];
@@ -581,14 +580,25 @@ class TtsService extends ChangeNotifier {
       final List<String> rawParts = paragraph.split(sentenceEnd);
       final List<String> parts = [];
       
-      // Combine parts to ensure we don't have too many tiny chunks (like just a closing quote)
+      // Combine parts to ensure we don't have too many tiny chunks
+      // and to keep trailing quotes/brackets with their sentences.
       String buffer = "";
       for (var part in rawParts) {
         buffer += part;
-        // If the part ends with one of our delimiters, or it's the last part, push it
-        if (RegExp(r'[!?.;:"]$').hasMatch(part.trim()) || part == rawParts.last) {
+        if (RegExp(r'[!?.;:]$').hasMatch(part.trim()) || part == rawParts.last) {
           if (buffer.trim().isNotEmpty) {
-            parts.add(buffer);
+            // Check if the current buffer is just trailing punctuation/quotes
+            // and we already have a previous part to attach it to.
+            final String trimmedBuffer = buffer.trim();
+            // A part is "just trailing" if it contains no letters or numbers
+            // This prevents quotes, brackets, etc., from being their own TTS chunks
+            final bool isJustTrailing = !RegExp(r'[a-zA-Z0-9]').hasMatch(trimmedBuffer);
+            
+            if (parts.isNotEmpty && isJustTrailing) {
+              parts[parts.length - 1] += buffer;
+            } else {
+              parts.add(buffer);
+            }
             buffer = "";
           }
         }
@@ -625,7 +635,9 @@ class TtsService extends ChangeNotifier {
               _chunkOffsets.add(currentGlobalOffset + paragraphOffset + leadingSpace + subStart);
             }
             subStart = subEnd;
-            while (subStart < trimmedPart.length && trimmedPart[subStart] == ' ') subStart++;
+            while (subStart < trimmedPart.length && trimmedPart[subStart] == ' ') {
+              subStart++;
+            }
           }
         } else {
           chunks.add(trimmedPart);

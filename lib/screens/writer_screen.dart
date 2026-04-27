@@ -819,10 +819,12 @@ class _WriterScreenState extends State<WriterScreen> {
         );
       }
     } finally {
-      setModalState(() {
-        _isLoadingVoice = false;
-        _downloadStatus = '';
-      });
+      if (mounted) {
+        setModalState(() {
+          _isLoadingVoice = false;
+          _downloadStatus = '';
+        });
+      }
     }
   }
 

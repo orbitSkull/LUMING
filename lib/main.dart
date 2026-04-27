@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'package:just_audio_background/just_audio_background.dart';
 import 'services/storage_service.dart';
@@ -150,19 +149,35 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!_hasPermission) return;
     try {
       final libraryDir = Directory(_storage.libraryPath);
-      if (libraryDir.existsSync()) {
-        final List<BookEntry> books = [];
-        final entities = libraryDir.listSync();
-        for (var entity in entities) {
-          if (entity is File && entity.path.endsWith('.json')) {
+      if (!libraryDir.existsSync()) return;
+
+      final List<BookEntry> books = [];
+      // Use listSync to get directories only, shallow scan for performance
+      final entities = libraryDir.listSync(followLinks: false);
+      
+      for (var entity in entities) {
+        if (entity is Directory) {
+          final metadataFile = File('${entity.path}/metadata.json');
+          if (metadataFile.existsSync()) {
             try {
-              final content = await entity.readAsString();
+              // Read as bytes first can be slightly faster for large files
+              final content = await metadataFile.readAsString();
               books.add(BookEntry.fromJson(jsonDecode(content)));
             } catch (_) {}
           }
+        } else if (entity is File && entity.path.endsWith('.json') && !entity.path.endsWith('metadata.json')) {
+          // Backward compatibility
+          try {
+            final content = await entity.readAsString();
+            books.add(BookEntry.fromJson(jsonDecode(content)));
+          } catch (_) {}
         }
+      }
+
+      if (mounted) {
         setState(() {
           _books = books;
+          // Pre-filter for existence only if needed
           _books.removeWhere((b) => !b.fileExists);
         });
       }
@@ -170,10 +185,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _saveBooks() async {
-    // Books are saved individually in their own files now.
-    // This method might not be needed globally anymore, but for backward compatibility
-    // or batch updates, it could iterate through _books.
     for (var book in _books) {
+      final dir = Directory(_storage.getBookDir(book.title));
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
       final file = File(_storage.getBookEntryFile(book.title));
       await file.writeAsString(jsonEncode(book.toJson()));
     }
@@ -190,6 +206,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final data = jsonDecode(await continueFile.readAsString());
         final lastPath = data['lastOpenedPath'];
         if (lastPath != null && File(lastPath).existsSync()) {
+          if (!mounted) return;
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -234,16 +251,18 @@ class _HomeScreenState extends State<HomeScreen> {
             context,
             MaterialPageRoute(
               builder: (context) => ReaderScreen(
-                filePath: filePath!,
+                filePath: filePath,
                 startChapter: 0,
               ),
             ),
           ).then((_) {
             _loadBooks();
             if (isNew) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Added to the library')),
-              );
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Added to the library')),
+                );
+              }
             }
           });
         }
@@ -383,17 +402,28 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _deleteBook(BookEntry book) {
-    if (book.coverPath != null && book.coverPath!.isNotEmpty) {
-      final coverFile = File(book.coverPath!);
-      if (coverFile.existsSync()) {
-        try {
-          coverFile.deleteSync();
-        } catch (_) {}
-      }
+    // Delete the entire book directory
+    final bookDir = Directory(_storage.getBookDir(book.title));
+    if (bookDir.existsSync()) {
+      try {
+        bookDir.deleteSync(recursive: true);
+      } catch (_) {}
     }
+
+    // Clean up continue.json if this was the last opened book
+    try {
+      final continueFile = File(_storage.continueFile);
+      if (continueFile.existsSync()) {
+        final content = continueFile.readAsStringSync();
+        final data = jsonDecode(content);
+        if (data['lastOpenedPath'] == book.filePath) {
+          continueFile.deleteSync();
+        }
+      }
+    } catch (_) {}
+
     setState(() {
       _books.removeWhere((b) => b.filePath == book.filePath);
-      _saveBooks();
     });
   }
 
@@ -811,6 +841,7 @@ class _HomeScreenState extends State<HomeScreen> {
           File(book.coverPath!),
           width: width,
           height: height,
+          cacheWidth: width > 0 ? (width * 2).toInt() : null, // Optimize RAM by not loading full-res cover
           fit: BoxFit.cover,
           errorBuilder: (context, error, stackTrace) => fallback,
         ),
@@ -916,49 +947,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildBody() {
     if (_isWriterMode) {
-      switch (_currentIndex) {
-        case 0:
-          return _buildWriterProjects();
-        case 1:
-          return _buildWriterIdeaBox();
-        case 2:
-          return _buildWriterStats();
-        case 3:
-          return ReaderPortalScreen(onGoToLibrary: () {
+      return IndexedStack(
+        index: _currentIndex,
+        children: [
+          const WriterProjectsScreen(),
+          const IdeaBoxScreen(),
+          const WriterStatsScreen(),
+          ReaderPortalScreen(onGoToLibrary: () {
             setState(() => _isWriterMode = false);
-          });
-        case 4:
-          return _buildWriterSettings();
-        default:
-          return _buildWriterProjects();
-      }
+          }),
+          const WriterSettingsScreen(),
+        ],
+      );
     }
-    switch (_currentIndex) {
-      case 0:
-        return _buildLibrary();
-      case 2:
-        return const StatsScreen();
-      case 4:
-        return const SettingsScreen();
-      default:
-        return _buildLibrary();
-    }
-  }
-
-  Widget _buildWriterProjects() {
-    return const WriterProjectsScreen();
-  }
-
-  Widget _buildWriterIdeaBox() {
-    return const IdeaBoxScreen();
-  }
-
-  Widget _buildWriterStats() {
-    return const WriterStatsScreen();
-  }
-
-  Widget _buildWriterSettings() {
-    return const WriterSettingsScreen();
+    return IndexedStack(
+      index: _currentIndex >= 5 ? 0 : _currentIndex, // Safety check
+      children: [
+        _buildLibrary(),
+        const SizedBox.shrink(), // Placeholder for Continue (which is a push)
+        const StatsScreen(),
+        const SizedBox.shrink(), // Placeholder for Writer (which is a state change)
+        const SettingsScreen(),
+      ],
+    );
   }
 
   void _onNavTap(int index) {

@@ -15,7 +15,7 @@ class _IdeaBoxScreenState extends State<IdeaBoxScreen> {
   final IdeaBoxService _service = IdeaBoxService();
   String _selectedCategory = 'all';
   String _searchQuery = '';
-  Set<String> _selectedIdeas = {};
+  final Set<String> _selectedIdeas = {};
   bool _isSelectionMode = false;
 
   @override
@@ -114,7 +114,6 @@ class _IdeaBoxScreenState extends State<IdeaBoxScreen> {
           imported++;
         }
         
-        setState(() {});
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Imported $imported ideas')),
@@ -170,8 +169,10 @@ class _IdeaBoxScreenState extends State<IdeaBoxScreen> {
                 onPressed: () async {
                   if (controller.text.isNotEmpty) {
                     await _service.addIdea(controller.text, category: category);
-                    setState(() {});
-                    Navigator.pop(ctx);
+                    if (ctx.mounted) {
+                      setState(() {});
+                      Navigator.pop(ctx);
+                    }
                   }
                 },
                 child: const Text('Save'),
@@ -341,7 +342,7 @@ class _IdeaBoxScreenState extends State<IdeaBoxScreen> {
     );
   }
 
-  void _showIdeaDetail(idea) {
+  void _showIdeaDetail(IdeaNote idea) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -355,8 +356,10 @@ class _IdeaBoxScreenState extends State<IdeaBoxScreen> {
           TextButton(
             onPressed: () async {
               await _service.deleteIdea(idea.id);
-              setState(() {});
-              Navigator.pop(ctx);
+              if (ctx.mounted) {
+                setState(() {});
+                Navigator.pop(ctx);
+              }
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Delete'),
