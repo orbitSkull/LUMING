@@ -698,7 +698,8 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                   Navigator.pop(ctx);
                   final path = await _service.pickCoverImage();
                   if (path != null) {
-                    final coversDir = Directory('$_projectFolderPath/covers');
+                    final storage = StorageService();
+                    final coversDir = Directory('${storage.projectsDir}/covers');
                     if (!coversDir.existsSync()) coversDir.createSync(recursive: true);
                     final ext = p.extension(path);
                     final newPath = '${coversDir.path}/${project.id}$ext';

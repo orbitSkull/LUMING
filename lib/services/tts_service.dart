@@ -383,7 +383,6 @@ class TtsService extends ChangeNotifier {
       settings[voice.configPrefKey] = configPath;
       await settingsFile.writeAsString(jsonEncode(settings));
 
-      final prefs = await SharedPreferences.getInstance();
       await prefs.setString(voice.modelPrefKey, modelPath);
       await prefs.setString(voice.configPrefKey, configPath);
       

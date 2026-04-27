@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/storage_service.dart';
 import '../services/tts_service.dart';
 import '../providers/reader_settings.dart';
-import '../widgets/voice_selection_modal.dart';
+import 'settings_screen.dart';
 
 class WriterSettingsScreen extends StatefulWidget {
   const WriterSettingsScreen({super.key});
