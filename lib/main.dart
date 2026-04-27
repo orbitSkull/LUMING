@@ -839,9 +839,9 @@ class _HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(borderRadius),
         child: Image.file(
           File(book.coverPath!),
-          width: width,
-          height: height,
-          cacheWidth: width > 0 ? (width * 2).toInt() : null, // Optimize RAM by not loading full-res cover
+          width: width.isFinite ? width : null,
+          height: height.isFinite ? height : null,
+          cacheWidth: (width > 0 && width.isFinite) ? (width * 2).toInt() : null,
           fit: BoxFit.cover,
           errorBuilder: (context, error, stackTrace) => fallback,
         ),

@@ -539,21 +539,23 @@ class _WriterScreenState extends State<WriterScreen> {
   void _showSettingsSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       builder: (context) => Consumer<ReaderSettings>(
-        builder: (context, settings, _) => Container(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('Writing Settings', style: Theme.of(context).textTheme.titleLarge),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
-                ],
-              ),
-              const SizedBox(height: 24),
+        builder: (context, settings, _) => SafeArea(
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Writing Settings', style: Theme.of(context).textTheme.titleLarge),
+                    IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                  ],
+                ),
+                const SizedBox(height: 24),
               Row(
                 children: [
                   const Text('Font Size:'),
@@ -603,6 +605,7 @@ class _WriterScreenState extends State<WriterScreen> {
               ),
             ],
           ),
+        ),
         ),
       ),
     );

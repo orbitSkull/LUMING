@@ -40,10 +40,21 @@ class EpubProjectService {
   factory EpubProjectService() => _instance;
   EpubProjectService._internal();
 
-  String _getJsonName(String id) => 'project-$id.json';
+  String getJsonName(String id, String title) {
+    final sanitized = title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+    return '$sanitized-$id.json';
+  }
 
   Future<String> createEmptyEpub(String title, String id, String folderPath) async {
-    final epubPath = '$folderPath/$title-$id.epub';
+    final sanitizedTitle = title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+    final epubPath = '$folderPath/$sanitizedTitle-$id.epub';
+    
+    // Ensure the folder exists
+    final dir = Directory(folderPath);
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+    
     final archive = Archive();
     
     // mimetype
@@ -97,6 +108,20 @@ class EpubProjectService {
     
     final file = File(epubPath);
     await file.writeAsBytes(encoded);
+    
+    // Create the project JSON file in the same folder
+    final projectJson = {
+      'id': id,
+      'title': title,
+      'epubPath': epubPath,
+      'coverPath': null,
+      'createdAt': DateTime.now().toIso8601String(),
+      'updatedAt': DateTime.now().toIso8601String(),
+      'bookmarks': [BookmarkType.all.name],
+    };
+    
+    final jsonPath = '$folderPath/${getJsonName(id, title)}';
+    await File(jsonPath).writeAsString(jsonEncode(projectJson));
     
     return epubPath;
   }
@@ -161,11 +186,11 @@ class EpubProjectService {
             final fullCoverPath = p.normalize(opfDir == '.' ? coverHref : '$opfDir/$coverHref').replaceAll('\\', '/');
             final coverFile = archive.findFile(fullCoverPath);
             if (coverFile != null) {
-              final coversDir = Directory('$folderPath/covers');
-              if (!coversDir.existsSync()) coversDir.createSync(recursive: true);
+              final projectDir = Directory(folderPath);
+              if (!projectDir.existsSync()) projectDir.createSync(recursive: true);
               
               final ext = p.extension(fullCoverPath).isEmpty ? '.jpg' : p.extension(fullCoverPath);
-              final coverFilePath = '${coversDir.path}/$id$ext';
+              final coverFilePath = '${projectDir.path}/cover$ext';
               await File(coverFilePath).writeAsBytes(coverFile.content);
               coverPath = coverFilePath;
             }
@@ -244,6 +269,7 @@ class EpubProjectService {
       
       await updateEpub(newEpubPath, chapters);
       
+      // Update the JSON file created by createEmptyEpub with cover info
       final projectJson = {
         'id': id,
         'title': newTitle,
@@ -254,7 +280,7 @@ class EpubProjectService {
         'bookmarks': [BookmarkType.all.name],
       };
       
-      final jsonPath = '$folderPath/${_getJsonName(id)}';
+      final jsonPath = '$folderPath/${getJsonName(id, newTitle)}';
       await File(jsonPath).writeAsString(jsonEncode(projectJson));
       
       return EpisodeProject.fromJson(projectJson);
@@ -271,6 +297,7 @@ class EpubProjectService {
     final chapters = await getChapters(source.epubPath!);
     await updateEpub(newEpubPath, chapters);
     
+    // Update the JSON file created by createEmptyEpub with source's cover
     final projectJson = {
       'id': newId,
       'title': newTitle,
@@ -281,7 +308,7 @@ class EpubProjectService {
       'bookmarks': [BookmarkType.all.name],
     };
     
-    final jsonPath = '$folderPath/${_getJsonName(newId)}';
+    final jsonPath = '$folderPath/${getJsonName(newId, newTitle)}';
     await File(jsonPath).writeAsString(jsonEncode(projectJson));
     
     return EpisodeProject.fromJson(projectJson);

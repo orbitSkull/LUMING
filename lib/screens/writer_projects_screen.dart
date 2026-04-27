@@ -371,46 +371,41 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
       if (result != null && result.files.isNotEmpty) {
         final path = result.files.first.path;
         if (path != null) {
-          final tempProject = await _service.importEpub(path, _storage.projectsPath);
-          if (tempProject != null) {
-            // Move it to its own folder
-            final projectDir = _storage.getProjectDir(tempProject.title);
-            if (!Directory(projectDir).existsSync()) {
-              Directory(projectDir).createSync(recursive: true);
-            }
-            
-            String? newEpubPath;
-            if (tempProject.epubPath != null) {
-              final oldEpubFile = File(tempProject.epubPath!);
-              newEpubPath = '$projectDir/${p.basename(tempProject.epubPath!)}';
-              oldEpubFile.renameSync(newEpubPath);
-            }
-
-            String? newCoverPath;
-            if (tempProject.coverPath != null) {
-              final oldCoverFile = File(tempProject.coverPath!);
-              newCoverPath = '$projectDir/${p.basename(tempProject.coverPath!)}';
-              oldCoverFile.renameSync(newCoverPath);
-            }
-
-            final project = EpisodeProject(
-              id: tempProject.id,
-              title: tempProject.title,
-              epubPath: newEpubPath,
-              coverPath: newCoverPath,
-              createdAt: tempProject.createdAt,
-              updatedAt: tempProject.updatedAt,
-              bookmarks: tempProject.bookmarks,
+          final now = DateTime.now();
+          final id = now.millisecondsSinceEpoch.toString();
+          
+          // Get title from epub file name
+          final fileName = path.split('/').last.split('\\').last;
+          var title = fileName.replaceAll('.epub', '').replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+          
+          // Create project folder
+          final sanitizedTitle = title.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+          final projectDir = '${_storage.projectsPath}/$sanitizedTitle';
+          final dir = Directory(projectDir);
+          if (!dir.existsSync()) dir.createSync(recursive: true);
+          
+          // Copy original epub to project folder with new name
+          final epubPath = '$projectDir/$sanitizedTitle-$id.epub';
+          File(path).copySync(epubPath);
+          
+          // Create project JSON
+          final project = EpisodeProject(
+            id: id,
+            title: title,
+            epubPath: epubPath,
+            coverPath: null,
+            createdAt: now,
+            updatedAt: now,
+            bookmarks: [BookmarkType.all],
+          );
+          
+          await _saveProject(project);
+          if (mounted) {
+            _projects.insert(0, project);
+            setState(() {});
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Imported: ${project.title}')),
             );
-
-            await _saveProject(project);
-            if (mounted) {
-              _projects.insert(0, project);
-              setState(() {});
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Imported: ${project.title}')),
-              );
-            }
           }
         }
       }
@@ -498,7 +493,7 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                           padding: const EdgeInsets.all(16),
                           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: 2,
-                            childAspectRatio: 0.85,
+                            childAspectRatio: 0.75,
                             crossAxisSpacing: 12,
                             mainAxisSpacing: 12,
                           ),
@@ -599,26 +594,31 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.start,
             children: [
-              project.coverPath != null && File(project.coverPath!).existsSync()
-                  ? Expanded(
-                      child: ClipRRect(
+              SizedBox(
+                height: 100,
+                child: project.coverPath != null && File(project.coverPath!).existsSync()
+                    ? ClipRRect(
                         borderRadius: BorderRadius.circular(4),
                         child: Image.file(
                           File(project.coverPath!),
                           fit: BoxFit.cover,
+                          width: double.infinity,
+                          cacheHeight: 200,
+                        ),
+                      )
+                    : Center(
+                        child: CircleAvatar(
+                          radius: 24,
+                          backgroundColor: Colors.teal,
+                          child: Text(
+                            project.title.isNotEmpty ? project.title[0].toUpperCase() : '?',
+                            style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                          ),
                         ),
                       ),
-                    )
-                  : CircleAvatar(
-                      radius: 24,
-                      backgroundColor: Colors.teal,
-                      child: Text(
-                        project.title.isNotEmpty ? project.title[0].toUpperCase() : '?',
-                        style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
-                    ),
+              ),
               const SizedBox(height: 8),
               Text(
                 project.title,
@@ -632,24 +632,22 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                 _formatDate(project.updatedAt),
                 style: TextStyle(fontSize: 10, color: Colors.grey[600]),
               ),
-              const SizedBox(height: 6),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: project.bookmarks.take(3).map((b) => Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 2),
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: _getBookmarkColor(b).withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      _getBookmarkLabel(b),
-                      style: TextStyle(fontSize: 8, color: _getBookmarkColor(b), fontWeight: FontWeight.bold),
-                    ),
-                  )).toList(),
-                ),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 4,
+                runSpacing: 4,
+                alignment: WrapAlignment.center,
+                children: project.bookmarks.take(3).map((b) => Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _getBookmarkColor(b).withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    _getBookmarkLabel(b),
+                    style: TextStyle(fontSize: 8, color: _getBookmarkColor(b), fontWeight: FontWeight.bold),
+                  ),
+                )).toList(),
               ),
             ],
           ),
@@ -695,11 +693,10 @@ class _WriterProjectsScreenState extends State<WriterProjectsScreen> {
                   Navigator.pop(ctx);
                   final path = await _service.pickCoverImage();
                   if (path != null) {
-                    final storage = StorageService();
-                    final coversDir = Directory('${storage.projectsPath}/covers');
-                    if (!coversDir.existsSync()) coversDir.createSync(recursive: true);
+                    final projectDir = Directory(_storage.getProjectDir(project.title));
+                    if (!projectDir.existsSync()) projectDir.createSync(recursive: true);
                     final ext = p.extension(path);
-                    final newPath = '${coversDir.path}/${project.id}$ext';
+                    final newPath = '${projectDir.path}/cover$ext';
                     File(path).copySync(newPath);
                     
                     // Also update the internal EPUB's cover if it exists

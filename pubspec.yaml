@@ -2,7 +2,7 @@ name: luming
 description: "LUMING - A Flutter app for reading EPUB files with TTS support using Piper plugin."
 publish_to: 'none'
 
-version: 1.2.0+1
+version: 1.3.1+5
 
 environment:
   sdk: ^3.11.5

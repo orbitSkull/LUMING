@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:path/path.dart' as p;
 import '../services/storage_service.dart';
 import '../models/episode_project.dart';
 import '../models/bookmark_type.dart';
@@ -69,17 +70,20 @@ class _WriterStatsScreenState extends State<WriterStatsScreen> {
         final entities = folder.listSync();
         for (var entity in entities) {
           if (entity is Directory) {
-            final projectName = entity.path.split(Platform.pathSeparator).last;
-            final metaFile = File('${entity.path}/project-$projectName.json');
-            
-            if (await metaFile.exists()) {
-              try {
-                final content = await metaFile.readAsString();
-                final json = jsonDecode(content);
-                final project = EpisodeProject.fromJson(json);
-                _projects.add(project);
-              } catch (e) {
-                debugPrint('Error loading project meta in ${entity.path}: $e');
+            final folderEntities = entity.listSync();
+            for (var subEntity in folderEntities) {
+              if (subEntity is File && subEntity.path.endsWith('.json') && !p.basename(subEntity.path).startsWith('stats-')) {
+                try {
+                  final content = await subEntity.readAsString();
+                  final json = jsonDecode(content);
+                  if (json.containsKey('id') && json.containsKey('title') && json.containsKey('epubPath')) {
+                    final project = EpisodeProject.fromJson(json);
+                    _projects.add(project);
+                    break;
+                  }
+                } catch (e) {
+                  debugPrint('Error loading project meta in ${subEntity.path}: $e');
+                }
               }
             }
           }
@@ -89,7 +93,9 @@ class _WriterStatsScreenState extends State<WriterStatsScreen> {
       debugPrint('Error loading projects: $e');
     }
 
-    setState(() => _isLoading = false);
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
   }
 
   void _showFilterOptions() {
